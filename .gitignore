@@ -1,0 +1,4 @@
+*.class
+__pycache__/
+.idea/
+.vscode/

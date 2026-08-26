@@ -1,0 +1,7 @@
+*.fsh text eol=lf
+*.json text eol=lf
+*.mcmeta text eol=lf
+*.md text eol=lf
+*.java text eol=lf
+*.py text eol=lf
+*.zip binary
