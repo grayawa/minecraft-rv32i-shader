@@ -1,6 +1,6 @@
 # Minecraft RV32IMA Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S 特权级、Sv32 虚拟内存、同步异常 delegation 和 trap 返回路径。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、同步异常 delegation 和 trap 返回路径。
 
 CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
@@ -15,6 +15,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - `medeleg` delegation、`MRET` 与 `SRET`
 - Sv32 两级页表遍历、4 KiB 页面与 4 MiB superpage
 - R/W/X/U/A/D、`SUM`、`MXR` 权限检查
+- `MPRV` 数据访问有效特权级
 - instruction/load/store page fault 与 `SFENCE.VMA`
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
@@ -54,14 +55,21 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 ## 内置程序
 
-内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。M-mode 随后在物理地址 `0xA000` 和 `0xB000` 建立两级 Sv32 页表，将虚拟代码页 `0x40000000` 映射到物理页 `0x00000000`，并将虚拟显存页 `0x40001000` 映射到物理页 `0x00001000`。
+内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。M-mode 随后在物理地址 `0xA000` 和 `0xB000` 建立两级 Sv32 页表。页表为物理代码页和显存页分别建立 supervisor 与 user 虚拟别名：
 
-程序通过 `MRET` 进入 S-mode，从虚拟地址执行代码，再将八类同步异常委托给虚拟 `stvec` handler。自检覆盖 `ECALL`、非法指令、地址未对齐，以及 instruction/load/store page fault，并核对对应的 `cause` 与 `tval`。验证成功后执行虚拟显存填充循环：
+| 虚拟页 | 物理页 | 权限 | 用途 |
+| --- | --- | --- | --- |
+| `0x40000000` | `0x00000000` | S: R-X | supervisor 代码与 trap handler |
+| `0x40001000` | `0x00001000` | S: RW- | supervisor 数据 |
+| `0x40002000` | `0x00000000` | U: --X | user 代码 |
+| `0x40003000` | `0x00001000` | U: RW- | user framebuffer |
+
+M-mode 通过 `MPRV` 访问 supervisor 数据映射，随后以 `MRET` 进入 S-mode。S-mode 自检覆盖同步异常 delegation、`SUM` user-page 数据访问和 `MXR` execute-only 页读取，再以 `SRET` 进入 U-mode。U-mode 通过 `ECALL` 和权限 page fault 往返 S-mode，最后执行虚拟显存填充循环：
 
 ```asm
-lui   x1, 0x40001
+lui   x1, 0x40003
 addi  x2, x0, 1
-lui   x6, 0x40002
+lui   x6, 0x40004
 addi  x6, x6, -1792
 
 fill_framebuffer:
@@ -72,7 +80,7 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-程序通过虚拟地址 `0x40001000`–`0x400018ff` 向物理显存 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2542 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
+U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2632 条指令。三种特权级各自的验证失败路径会将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
 ## 指令范围
 
@@ -92,7 +100,7 @@ ebreak
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级与 LR/SC reservation。
 
-当前执行环境覆盖 M/S 特权级、Sv32 页表遍历，以及异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15` 的 trap entry。Linux 启动路径的下一层包括 U-mode 验证、MPRV 数据访问、CLINT、timer interrupt 和 UART。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，以及异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15` 的 trap entry。Linux 启动路径的下一层包括 CLINT、timer interrupt、外部中断和 UART。
 
 ## 纹理机器布局
 
@@ -132,11 +140,11 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 | `0` | Running |
 | `1` | EBREAK |
 
-同步异常通过 M/S trap handler 继续执行，原因和附加值分别保存在 `mcause`/`mtval` 或 `scause`/`stval`。仪表盘指示灯以绿色表示运行、金色表示 EBREAK。
+同步异常通过 M/S trap handler 继续执行，U-mode 委托异常进入 S-mode。原因和附加值分别保存在 `mcause`/`mtval` 或 `scause`/`stval`。仪表盘指示灯以绿色表示运行、金色表示 EBREAK。
 
 ## 加载自己的程序
 
-模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，并通过 `MRET` 进入 Sv32 虚拟地址空间。物理 RAM 范围为 `0x00000000`–`0x0000feef`。
+模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。物理 RAM 范围为 `0x00000000`–`0x0000feef`。
 
 转换 binary：
 
@@ -154,7 +162,7 @@ powershell -ExecutionPolicy Bypass -File tools/package.ps1
 
 ## 验证
 
-参考执行测试会重建内置机器码，并执行 RV32IMA、M/S CSR、Sv32 页表遍历、page fault delegation 与虚拟显存程序：
+参考执行测试会重建内置机器码，并执行 RV32IMA、M/S CSR、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
 
 ```powershell
 python tools/test_demo.py
@@ -163,7 +171,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA Sv32 OK: 2 mapped pages, 3 page-fault paths, 576 framebuffer stores, 2542 instructions
+RV32IMA M/S/U OK: Sv32, MPRV, SUM/MXR, 12 delegated traps, 2632 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

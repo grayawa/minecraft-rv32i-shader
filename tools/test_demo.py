@@ -19,6 +19,7 @@ CSR_MEPC = 0x341
 CSR_MCAUSE = 0x342
 CSR_MTVAL = 0x343
 CSR_STVEC = 0x105
+CSR_SSTATUS = 0x100
 CSR_SSCRATCH = 0x140
 CSR_SEPC = 0x141
 CSR_SCAUSE = 0x142
@@ -28,53 +29,72 @@ CSR_SATP = 0x180
 EXPECTED_PROGRAM = [
     0x01500193, 0x00600213, 0x024182B3, 0x02419333,
     0x0241A3B3, 0x0241B433, 0x0241C4B3, 0x0241D533,
-    0x0241E5B3, 0x0241F633, 0x07E00693, 0x26D29A63,
-    0x26031863, 0x26039663, 0x26041463, 0x00300713,
-    0x26E49063, 0x24E51E63, 0x24E59C63, 0x24E61A63,
-    0x340297F3, 0x34002873, 0x24079463, 0x24581263,
-    0x40000893, 0x00700913, 0x0128A023, 0x1008A9AF,
+    0x0241E5B3, 0x0241F633, 0x07E00693, 0x34D29E63,
+    0x34031C63, 0x34039A63, 0x34041863, 0x00300713,
+    0x34E49463, 0x34E51263, 0x34E59063, 0x32E61E63,
+    0x340297F3, 0x34002873, 0x32079863, 0x32581663,
+    0x60000893, 0x00700913, 0x0128A023, 0x1008A9AF,
     0x00900A13, 0x1948AAAF, 0x0008AB03, 0x00700B93,
-    0x23799063, 0x200A9E63, 0x00900B93, 0x217B1A63,
-    0x0128AC2F, 0x0008AC83, 0x217C1463, 0x01000B93,
-    0x217C9063, 0x2B400D13, 0x305D1073, 0x00000D93,
-    0x00000073, 0x00100E13, 0x1FCD9463, 0x34202EF3,
-    0x00B00F13, 0x1DEE9E63, 0x00102003, 0x00200E13,
-    0x1DCD9863, 0x34202EF3, 0x00400F13, 0x1DEE9263,
-    0x34302EF3, 0x00100F13, 0x1BEE9C63, 0x0000A8B7,
+    0x31799463, 0x300A9263, 0x00900B93, 0x2F7B1E63,
+    0x0128AC2F, 0x0008AC83, 0x2F7C1863, 0x01000B93,
+    0x2F7C9463, 0x3C400D13, 0x305D1073, 0x00000D93,
+    0x00000073, 0x00100E13, 0x2DCD9863, 0x34202EF3,
+    0x00B00F13, 0x2DEE9263, 0x00102003, 0x00200E13,
+    0x2BCD9C63, 0x34202EF3, 0x00400F13, 0x2BEE9663,
+    0x34302EF3, 0x00100F13, 0x2BEE9063, 0x0000A8B7,
     0x0000B937, 0x000039B7, 0xC0198993, 0x4138A023,
     0x04B00993, 0x01392023, 0x4C700993, 0x01392223,
-    0x40000D37, 0x2C8D0D13, 0x105D1073, 0x0000BD37,
-    0x2F7D0D13, 0x302D1073, 0x40000D37, 0x154D0D13,
-    0x341D1073, 0x80000D37, 0x00AD0D13, 0x180D1073,
-    0x12000073, 0x00001D37, 0x800D0D13, 0x300D1073,
-    0x30200073, 0x00000D93, 0x00000073, 0x00100E13,
-    0x15CD9063, 0x14202EF3, 0x00900F13, 0x13EE9A63,
-    0xFFFFFFFF, 0x00200E13, 0x13CD9463, 0x14202EF3,
-    0x00200F13, 0x11EE9E63, 0x14302EF3, 0xFFF00F13,
-    0x11EE9863, 0x00102003, 0x00300E13, 0x11CD9263,
-    0x14202EF3, 0x00400F13, 0x0FEE9C63, 0x14302EF3,
-    0x00100F13, 0x0FEE9663, 0x00002123, 0x00400E13,
-    0x0FCD9063, 0x14202EF3, 0x00600F13, 0x0DEE9A63,
-    0x14302EF3, 0x00200F13, 0x0DEE9463, 0x50000D37,
-    0x000D2003, 0x00500E13, 0x0BCD9C63, 0x14202EF3,
-    0x00D00F13, 0x0BEE9663, 0x14302EF3, 0x0BAE9263,
-    0x000D2023, 0x00600E13, 0x09CD9C63, 0x14202EF3,
-    0x00F00F13, 0x09EE9663, 0x14302EF3, 0x09AE9263,
-    0x00200D13, 0x000D0067, 0x00700E13, 0x07CD9A63,
-    0x14202EF3, 0x00000F13, 0x07EE9463, 0x14302EF3,
-    0x00200F13, 0x05EE9E63, 0x40000D37, 0x25CD0D13,
-    0x140D1073, 0x50000D37, 0x000D0067, 0x00800E13,
-    0x05CD9063, 0x14202EF3, 0x00C00F13, 0x03EE9A63,
-    0x14302EF3, 0x03AE9663, 0x12000073, 0x400010B7,
-    0x00100113, 0x40002337, 0x90030313, 0x0020A023,
-    0x00408093, 0x00110113, 0xFE60EAE3, 0x00100073,
-    0x400010B7, 0xDEADC137, 0xEEF10113, 0x0020A023,
+    0x05900993, 0x01392423, 0x4D700993, 0x01392623,
+    0x80000D37, 0x00AD0D13, 0x180D1073, 0x12000073,
+    0x000018B7, 0x02A00A13, 0x0148A023, 0x40001AB7,
+    0x00021D37, 0x800D0D13, 0x300D1073, 0x000AAB03,
+    0x234B1C63, 0x02B00B93, 0x017AA023, 0x30001073,
+    0x0008AC03, 0x237C1263, 0x40000D37, 0x3D8D0D13,
+    0x105D1073, 0x0000BD37, 0x3F7D0D13, 0x302D1073,
+    0x40000D37, 0x19CD0D13, 0x341D1073, 0x00001D37,
+    0x800D0D13, 0x300D1073, 0x30200073, 0x00000D93,
+    0x00000073, 0x00100E13, 0x1FCD9A63, 0x14202EF3,
+    0x00900F13, 0x1FEE9463, 0xFFFFFFFF, 0x00200E13,
+    0x1DCD9E63, 0x14202EF3, 0x00200F13, 0x1DEE9863,
+    0x14302EF3, 0xFFF00F13, 0x1DEE9263, 0x00102003,
+    0x00300E13, 0x1BCD9C63, 0x14202EF3, 0x00400F13,
+    0x1BEE9663, 0x14302EF3, 0x00100F13, 0x1BEE9063,
+    0x00002123, 0x00400E13, 0x19CD9A63, 0x14202EF3,
+    0x00600F13, 0x19EE9463, 0x14302EF3, 0x00200F13,
+    0x17EE9E63, 0x50000D37, 0x000D2003, 0x00500E13,
+    0x17CD9663, 0x14202EF3, 0x00D00F13, 0x17EE9063,
+    0x14302EF3, 0x15AE9C63, 0x000D2023, 0x00600E13,
+    0x15CD9663, 0x14202EF3, 0x00F00F13, 0x15EE9063,
+    0x14302EF3, 0x13AE9C63, 0x00200D13, 0x000D0067,
+    0x00700E13, 0x13CD9463, 0x14202EF3, 0x00000F13,
+    0x11EE9E63, 0x14302EF3, 0x00200F13, 0x11EE9863,
+    0x40000D37, 0x2A4D0D13, 0x140D1073, 0x50000D37,
+    0x000D0067, 0x00800E13, 0x0FCD9A63, 0x14202EF3,
+    0x00C00F13, 0x0FEE9463, 0x14302EF3, 0x0FAE9063,
+    0x12000073, 0x40003D37, 0x000D2A03, 0x00900E13,
+    0x0DCD9663, 0x14202EF3, 0x00D00F13, 0x0DEE9063,
+    0x00040CB7, 0x100CA073, 0x000D2A03, 0x0B7A1863,
+    0x40002D37, 0x338D0D13, 0x000D2A03, 0x00A00E13,
+    0x09CD9E63, 0x14202EF3, 0x00D00F13, 0x09EE9863,
+    0x00080CB7, 0x100CA073, 0x000D2A03, 0x07300B93,
+    0x077A1E63, 0x40002D37, 0x334D0D13, 0x141D1073,
+    0x10200073, 0x00000D93, 0x00000073, 0x00100E13,
+    0x07CD9863, 0x00800E13, 0x07CF1463, 0x40000D37,
+    0x000D2003, 0x00200E13, 0x05CD9C63, 0x00D00E13,
+    0x05CF1863, 0x400030B7, 0x00100113, 0x40004337,
+    0x90030313, 0x0020A023, 0x00408093, 0x00110113,
+    0xFE60EAE3, 0x00100073, 0x000010B7, 0xDEADC137,
+    0xEEF10113, 0x0020A023, 0x00100073, 0x400010B7,
+    0xDEADC137, 0xEEF10113, 0x0020A023, 0x00100073,
+    0x400030B7, 0xDEADC137, 0xEEF10113, 0x0020A023,
     0x00100073, 0x001D8D93, 0x34102FF3, 0x004F8F93,
     0x341F9073, 0x30200073, 0x001D8D93, 0x14202F73,
     0x00C00F93, 0x01FF1863, 0x14002FF3, 0x141F9073,
     0x10200073, 0x14102FF3, 0x004F8F93, 0x141F9073,
     0x10200073,
 ]
+
+
 
 
 
@@ -300,6 +320,10 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
         next_pc = (pc + 4) & MASK32
         trap: tuple[int, int] | None = None
         instruction = 0
+        data_privilege = privilege
+        if privilege == 3 and csrs[CSR_MSTATUS] & (1 << 17):
+            machine_previous_privilege = (csrs[CSR_MSTATUS] >> 11) & 3
+            data_privilege = machine_previous_privilege if machine_previous_privilege in (0, 1, 3) else 0
 
         if pc & 3:
             trap = (0, pc)
@@ -346,7 +370,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                 if address & 3:
                     trap = (6, address)
                 else:
-                    physical_address = translate_address(memory, csrs, address, 2, privilege)
+                    physical_address = translate_address(memory, csrs, address, 2, data_privilege)
                     if physical_address is None:
                         trap = (15, address)
                     elif physical_address > RAM_BYTES - 4:
@@ -360,7 +384,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                 if address & 3:
                     trap = (4, address)
                 else:
-                    physical_address = translate_address(memory, csrs, address, 1, privilege)
+                    physical_address = translate_address(memory, csrs, address, 1, data_privilege)
                     if physical_address is None:
                         trap = (13, address)
                     elif physical_address > RAM_BYTES - 4:
@@ -376,7 +400,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                     trap = (4 if load_reservation else 6, address)
                 else:
                     physical_address = translate_address(
-                        memory, csrs, address, access_type, privilege
+                        memory, csrs, address, access_type, data_privilege
                     )
                     if physical_address is None:
                         trap = (13 if load_reservation else 15, address)
@@ -417,13 +441,20 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                         next_pc = target
             elif opcode == 0x73 and funct3 in (1, 2):
                 address = instruction >> 20
-                if address not in csrs:
+                state_address = CSR_MSTATUS if address == CSR_SSTATUS else address
+                required_privilege = (address >> 8) & 3
+                if state_address not in csrs or privilege < required_privilege:
                     trap = (2, instruction)
                 else:
-                    old_value = csrs[address]
+                    write_mask = 0x000DE162 if address == CSR_SSTATUS else MASK32
+                    old_value = csrs[state_address] & write_mask
                     operand = registers[rs1]
                     if funct3 == 1 or operand != 0:
-                        csrs[address] = operand if funct3 == 1 else old_value | operand
+                        requested_value = operand if funct3 == 1 else old_value | operand
+                        csrs[state_address] = (
+                            (csrs[state_address] & ~write_mask)
+                            | (requested_value & write_mask)
+                        )
                     registers[rd] = old_value
             elif instruction == 0x00000073:
                 trap = (8 if privilege == 0 else 9 if privilege == 1 else 11, 0)
@@ -435,13 +466,15 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                     | (previous_interrupt_enable << 3)
                     | (1 << 7)
                 )
+                if previous_privilege != 3:
+                    csrs[CSR_MSTATUS] &= ~(1 << 17)
                 privilege = previous_privilege
                 next_pc = csrs[CSR_MEPC]
             elif instruction == 0x10200073 and privilege >= 1:
                 previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 5) & 1
                 previous_privilege = (csrs[CSR_MSTATUS] >> 8) & 1
                 csrs[CSR_MSTATUS] = (
-                    (csrs[CSR_MSTATUS] & ~0x122)
+                    (csrs[CSR_MSTATUS] & ~0x20122)
                     | (previous_interrupt_enable << 1)
                     | (1 << 5)
                 )
@@ -516,35 +549,35 @@ def main() -> None:
     assert registers[9:13] == [3, 3, 3, 3]
     assert registers[15] == 0
     assert registers[16] == 126
-    assert registers[17:20] == [0xA000, 0xB000, 0x4C7]
-    assert registers[21] == 0
-    assert registers[22] == 9
-    assert registers[24] == 9
-    assert registers[25] == 16
-    assert registers[27] == 8
-    assert registers[29] == 0x50000000
-    assert struct.unpack_from("<I", memory, 1024)[0] == 16
+    assert registers[17:20] == [0x1000, 0xB000, 0x4D7]
+    assert registers[21:25] == [0x40001000, 42, 0x73, 43]
+    assert registers[25] == 0x80000
+    assert registers[27] == 2
+    assert registers[29] == 13
+    assert struct.unpack_from("<I", memory, 1536)[0] == 16
     assert struct.unpack_from("<I", memory, 0xA400)[0] == 0x2C01
     assert struct.unpack_from("<I", memory, 0xB000)[0] == 0x4B
     assert struct.unpack_from("<I", memory, 0xB004)[0] == 0x4C7
+    assert struct.unpack_from("<I", memory, 0xB008)[0] == 0x59
+    assert struct.unpack_from("<I", memory, 0xB00C)[0] == 0x4D7
     assert csrs[CSR_MSCRATCH] == 126
-    assert csrs[CSR_MTVEC] == 0x2B4
-    assert csrs[CSR_MEPC] == 0x40000154
+    assert csrs[CSR_MTVEC] == 0x3C4
+    assert csrs[CSR_MEPC] == 0x4000019C
     assert csrs[CSR_MCAUSE] == 4
     assert csrs[CSR_MTVAL] == 1
-    assert csrs[CSR_MEDELEG] == 0xB2F7
-    assert csrs[CSR_STVEC] == 0x400002C8
-    assert csrs[CSR_SSCRATCH] == 0x4000025C
-    assert csrs[CSR_SEPC] == 0x4000025C
-    assert csrs[CSR_SCAUSE] == 12
-    assert csrs[CSR_STVAL] == 0x50000000
+    assert csrs[CSR_MEDELEG] == 0xB3F7
+    assert csrs[CSR_STVEC] == 0x400003D8
+    assert csrs[CSR_SSCRATCH] == 0x400002A4
+    assert csrs[CSR_SEPC] == 0x40002354
+    assert csrs[CSR_SCAUSE] == 13
+    assert csrs[CSR_STVAL] == 0x40000000
     assert csrs[CSR_SATP] == 0x8000000A
-    assert csrs[CSR_MSTATUS] == 0xA0
-    assert privilege == 1
-    assert pc == 0x4000029C
-    assert cycle == 2542
+    assert csrs[CSR_MSTATUS] == 0xC00A2
+    assert privilege == 0
+    assert pc == 0x40002384
+    assert cycle == 2632
     assert status == 1
-    print("RV32IMA Sv32 OK: 2 mapped pages, 3 page-fault paths, 576 framebuffer stores, 2542 instructions")
+    print("RV32IMA M/S/U OK: Sv32, MPRV, SUM/MXR, 12 delegated traps, 2632 instructions")
 
 
 if __name__ == "__main__":
