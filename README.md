@@ -1,6 +1,6 @@
 # Minecraft RV32IMA Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S 特权级、同步 `ECALL` delegation 和 trap 返回路径。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S 特权级、同步异常 delegation 和 trap 返回路径。
 
 CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
@@ -11,12 +11,13 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - RV32A 的十一条 32 位原子指令
 - Zicsr 的六种 CSR 读写指令
 - M-mode 与 S-mode CSR bank
-- `ECALL` 同步 trap entry、`medeleg` delegation、`MRET` 与 `SRET`
+- `ECALL` 与内存/指令异常的同步 trap entry
+- `medeleg` delegation、`MRET` 与 `SRET`
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
 - 65,264 字节小端 RAM
 - 8 位、16 位和 32 位 load/store
-- 自然对齐访问与可视化异常状态
+- 自然对齐访问与标准 `cause`/`tval` 异常元数据
 - 32 × 18 单词显存，基地址为 `0x00001000`
 - 约 120 指令/秒的 60 FPS 默认执行速度
 - PC、周期、状态、`x1`–`x8`、显存与 RAM 活动仪表盘
@@ -50,7 +51,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 ## 内置程序
 
-内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。程序随后通过 `mtvec` 完成 M-mode `ECALL` 往返，使用 `MRET` 进入 S-mode，再将 S-mode `ECALL` 委托给 `stvec` 并通过 `SRET` 返回。验证成功后执行显存填充循环：
+内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。程序随后通过 `mtvec` 完成 M-mode trap 往返，使用 `MRET` 进入 S-mode，再将八类同步异常委托给 `stvec` 并通过 `SRET` 返回。自检覆盖 `ECALL`、非法指令、取指错误、load/store 地址错误和 load/store 越界，并核对对应的 `cause` 与 `tval`。验证成功后执行显存填充循环：
 
 ```asm
 lui   x1, 0x1
@@ -66,7 +67,7 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2386 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
+程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2526 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
 ## 指令范围
 
@@ -86,7 +87,7 @@ ebreak
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级与 LR/SC reservation。
 
-当前执行环境覆盖 M/S 特权级裸机程序、M-mode `ECALL` trap 和委托到 S-mode 的同步 `ECALL` trap。Linux 启动路径的下一层包括完整同步异常 trap、U-mode 验证、Sv32 MMU、CLINT 和 UART。
+当前执行环境覆盖 M/S 特权级裸机程序，以及异常原因 `0`、`1`、`2`、`4`–`9`、`11` 的 trap entry。Linux 启动路径的下一层包括 U-mode 验证、Sv32 MMU 与 page-fault trap、CLINT 和 UART。
 
 ## 纹理机器布局
 
@@ -125,14 +126,8 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 | --- | --- |
 | `0` | Running |
 | `1` | EBREAK |
-| `2` | ECALL |
-| `3` | Illegal instruction |
-| `4` | Instruction fetch fault |
-| `5` | Load access fault |
-| `6` | Store access fault |
-| `7` | Address alignment fault |
 
-仪表盘指示灯以绿色表示运行、金色表示 EBREAK、红色表示异常状态。
+同步异常通过 M/S trap handler 继续执行，原因和附加值分别保存在 `mcause`/`mtval` 或 `scause`/`stval`。仪表盘指示灯以绿色表示运行、金色表示 EBREAK。
 
 ## 加载自己的程序
 
@@ -163,7 +158,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA + M/S trap demo OK: self-test passed, 576 framebuffer stores, 2386 instructions
+RV32IMA synchronous traps OK: 8 exception paths, 576 framebuffer stores, 2526 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

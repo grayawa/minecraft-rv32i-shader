@@ -1,4 +1,4 @@
-"""Reference execution test for the bundled RV32IMA M/S privilege self-test."""
+"""Reference execution test for the bundled RV32IMA synchronous-trap self-test."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ CSR_MEPC = 0x341
 CSR_MCAUSE = 0x342
 CSR_MTVAL = 0x343
 CSR_STVEC = 0x105
+CSR_SSCRATCH = 0x140
 CSR_SEPC = 0x141
 CSR_SCAUSE = 0x142
 CSR_STVAL = 0x143
@@ -26,27 +27,48 @@ CSR_STVAL = 0x143
 EXPECTED_PROGRAM = [
     0x01500193, 0x00600213, 0x024182B3, 0x02419333,
     0x0241A3B3, 0x0241B433, 0x0241C4B3, 0x0241D533,
-    0x0241E5B3, 0x0241F633, 0x07E00693, 0x10D29263,
-    0x10031063, 0x0E039E63, 0x0E041C63, 0x00300713,
-    0x0EE49863, 0x0EE51663, 0x0EE59463, 0x0EE61263,
-    0x340297F3, 0x34002873, 0x0C079C63, 0x0C581A63,
-    0x20000893, 0x00700913, 0x0128A023, 0x1008A9AF,
+    0x0241E5B3, 0x0241F633, 0x07E00693, 0x22D29A63,
+    0x22031863, 0x22039663, 0x22041463, 0x00300713,
+    0x22E49063, 0x20E51E63, 0x20E59C63, 0x20E61A63,
+    0x340297F3, 0x34002873, 0x20079463, 0x20581263,
+    0x40000893, 0x00700913, 0x0128A023, 0x1008A9AF,
     0x00900A13, 0x1948AAAF, 0x0008AB03, 0x00700B93,
-    0x0B799863, 0x0A0A9663, 0x00900B93, 0x0B7B1263,
-    0x0128AC2F, 0x0008AC83, 0x097C1C63, 0x01000B93,
-    0x097C9863, 0x14400D13, 0x305D1073, 0x00000D93,
-    0x00000073, 0x00100E13, 0x07CD9C63, 0x34202EF3,
-    0x00B00F13, 0x07EE9663, 0x15800D13, 0x105D1073,
-    0x20000D13, 0x302D1073, 0x0F000D13, 0x341D1073,
-    0x00001D37, 0x800D0D13, 0x300D1073, 0x30200073,
-    0x00000D93, 0x00000073, 0x00100E13, 0x03CD9A63,
-    0x14202EF3, 0x00900F13, 0x03EE9463, 0x000010B7,
+    0x1F799063, 0x1C0A9E63, 0x00900B93, 0x1D7B1A63,
+    0x0128AC2F, 0x0008AC83, 0x1D7C1463, 0x01000B93,
+    0x1D7C9063, 0x27400D13, 0x305D1073, 0x00000D93,
+    0x00000073, 0x00100E13, 0x1BCD9463, 0x34202EF3,
+    0x00B00F13, 0x19EE9E63, 0x00102003, 0x00200E13,
+    0x19CD9863, 0x34202EF3, 0x00400F13, 0x19EE9263,
+    0x34302EF3, 0x00100F13, 0x17EE9C63, 0x28800D13,
+    0x105D1073, 0x2F700D13, 0x302D1073, 0x11400D13,
+    0x341D1073, 0x00001D37, 0x800D0D13, 0x300D1073,
+    0x30200073, 0x00000D93, 0x00000073, 0x00100E13,
+    0x15CD9063, 0x14202EF3, 0x00900F13, 0x13EE9A63,
+    0xFFFFFFFF, 0x00200E13, 0x13CD9463, 0x14202EF3,
+    0x00200F13, 0x11EE9E63, 0x14302EF3, 0xFFF00F13,
+    0x11EE9863, 0x00102003, 0x00300E13, 0x11CD9263,
+    0x14202EF3, 0x00400F13, 0x0FEE9C63, 0x14302EF3,
+    0x00100F13, 0x0FEE9663, 0x00002123, 0x00400E13,
+    0x0FCD9063, 0x14202EF3, 0x00600F13, 0x0DEE9A63,
+    0x14302EF3, 0x00200F13, 0x0DEE9463, 0x00010D37,
+    0xEF0D0D13, 0x000D2003, 0x00500E13, 0x0BCD9A63,
+    0x14202EF3, 0x00500F13, 0x0BEE9463, 0x14302EF3,
+    0x0BAE9063, 0x000D2023, 0x00600E13, 0x09CD9A63,
+    0x14202EF3, 0x00700F13, 0x09EE9463, 0x14302EF3,
+    0x09AE9063, 0x00200D13, 0x000D0067, 0x00700E13,
+    0x07CD9863, 0x14202EF3, 0x00000F13, 0x07EE9263,
+    0x14302EF3, 0x00200F13, 0x05EE9C63, 0x22000D13,
+    0x140D1073, 0x00010D37, 0xEF0D0D13, 0x000D0067,
+    0x00800E13, 0x03CD9E63, 0x14202EF3, 0x00100F13,
+    0x03EE9863, 0x14302EF3, 0x03AE9463, 0x000010B7,
     0x00100113, 0x00002337, 0x90030313, 0x0020A023,
     0x00408093, 0x00110113, 0xFE60EAE3, 0x00100073,
     0x000010B7, 0xDEADC137, 0xEEF10113, 0x0020A023,
-    0x00100073, 0x00100D93, 0x34102FF3, 0x004F8F93,
-    0x341F9073, 0x30200073, 0x00100D93, 0x14102FF3,
-    0x004F8F93, 0x141F9073, 0x10200073,
+    0x00100073, 0x001D8D93, 0x34102FF3, 0x004F8F93,
+    0x341F9073, 0x30200073, 0x001D8D93, 0x14202F73,
+    0x00100F93, 0x01FF1863, 0x14002FF3, 0x141F9073,
+    0x10200073, 0x14102FF3, 0x004F8F93, 0x141F9073,
+    0x10200073,
 ]
 
 
@@ -165,6 +187,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
         CSR_MCAUSE: 0,
         CSR_MTVAL: 0,
         CSR_STVEC: 0,
+        CSR_SSCRATCH: 0,
         CSR_SEPC: 0,
         CSR_SCAUSE: 0,
         CSR_STVAL: 0,
@@ -178,64 +201,133 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
     cycle = 0
     status = 0
     while status == 0 and cycle < 10_000:
-        instruction = struct.unpack_from("<I", memory, pc)[0]
-        opcode = instruction & 0x7F
-        rd = (instruction >> 7) & 0x1F
-        funct3 = (instruction >> 12) & 7
-        rs1 = (instruction >> 15) & 0x1F
-        rs2 = (instruction >> 20) & 0x1F
-        funct7 = instruction >> 25
         next_pc = (pc + 4) & MASK32
+        trap: tuple[int, int] | None = None
+        instruction = 0
 
-        if opcode == 0x37:
-            registers[rd] = instruction & 0xFFFFF000
-        elif opcode == 0x13 and funct3 == 0:
-            immediate = sign_extend(instruction >> 20, 12)
-            registers[rd] = (registers[rs1] + immediate) & MASK32
-        elif opcode == 0x33 and funct7 == 1:
-            registers[rd] = execute_rv32m(funct3, registers[rs1], registers[rs2])
-        elif opcode == 0x23 and funct3 == 2:
-            immediate = ((instruction >> 25) << 5) | ((instruction >> 7) & 0x1F)
-            address = (registers[rs1] + sign_extend(immediate, 12)) & MASK32
-            struct.pack_into("<I", memory, address, registers[rs2])
-            reservation = None
-        elif opcode == 0x03 and funct3 == 2:
-            immediate = sign_extend(instruction >> 20, 12)
-            address = (registers[rs1] + immediate) & MASK32
-            registers[rd] = struct.unpack_from("<I", memory, address)[0]
-        elif opcode == 0x2F and funct3 == 2:
-            address = registers[rs1]
-            old_value = struct.unpack_from("<I", memory, address)[0]
-            atomic_function = instruction >> 27
-            if atomic_function == 2 and rs2 == 0:
-                registers[rd] = old_value
-                reservation = address
-            elif atomic_function == 3:
-                success = reservation == address
-                registers[rd] = 0 if success else 1
-                if success:
+        if pc & 3:
+            trap = (0, pc)
+        elif pc > RAM_BYTES - 4:
+            trap = (1, pc)
+        else:
+            instruction = struct.unpack_from("<I", memory, pc)[0]
+            opcode = instruction & 0x7F
+            rd = (instruction >> 7) & 0x1F
+            funct3 = (instruction >> 12) & 7
+            rs1 = (instruction >> 15) & 0x1F
+            rs2 = (instruction >> 20) & 0x1F
+            funct7 = instruction >> 25
+
+            if opcode == 0x37:
+                registers[rd] = instruction & 0xFFFFF000
+            elif opcode == 0x13 and funct3 == 0:
+                immediate = sign_extend(instruction >> 20, 12)
+                registers[rd] = (registers[rs1] + immediate) & MASK32
+            elif opcode == 0x33 and funct7 == 1:
+                registers[rd] = execute_rv32m(funct3, registers[rs1], registers[rs2])
+            elif opcode == 0x67 and funct3 == 0:
+                immediate = sign_extend(instruction >> 20, 12)
+                target = (registers[rs1] + immediate) & 0xFFFFFFFE
+                if target & 3:
+                    trap = (0, target)
+                else:
+                    registers[rd] = next_pc
+                    next_pc = target
+            elif opcode == 0x23 and funct3 == 2:
+                immediate = ((instruction >> 25) << 5) | ((instruction >> 7) & 0x1F)
+                address = (registers[rs1] + sign_extend(immediate, 12)) & MASK32
+                if address & 3:
+                    trap = (6, address)
+                elif address > RAM_BYTES - 4:
+                    trap = (7, address)
+                else:
                     struct.pack_into("<I", memory, address, registers[rs2])
-                reservation = None
-            elif atomic_function == 0:
-                registers[rd] = old_value
-                struct.pack_into("<I", memory, address, (old_value + registers[rs2]) & MASK32)
-                reservation = None
+                    reservation = None
+            elif opcode == 0x03 and funct3 == 2:
+                immediate = sign_extend(instruction >> 20, 12)
+                address = (registers[rs1] + immediate) & MASK32
+                if address & 3:
+                    trap = (4, address)
+                elif address > RAM_BYTES - 4:
+                    trap = (5, address)
+                else:
+                    registers[rd] = struct.unpack_from("<I", memory, address)[0]
+            elif opcode == 0x2F and funct3 == 2:
+                address = registers[rs1]
+                atomic_function = instruction >> 27
+                load_reservation = atomic_function == 2 and rs2 == 0
+                if address & 3:
+                    trap = (4 if load_reservation else 6, address)
+                elif address > RAM_BYTES - 4:
+                    trap = (5 if load_reservation else 7, address)
+                else:
+                    old_value = struct.unpack_from("<I", memory, address)[0]
+                    if load_reservation:
+                        registers[rd] = old_value
+                        reservation = address
+                    elif atomic_function == 3:
+                        success = reservation == address
+                        registers[rd] = 0 if success else 1
+                        if success:
+                            struct.pack_into("<I", memory, address, registers[rs2])
+                        reservation = None
+                    elif atomic_function == 0:
+                        registers[rd] = old_value
+                        struct.pack_into(
+                            "<I", memory, address, (old_value + registers[rs2]) & MASK32
+                        )
+                        reservation = None
+                    else:
+                        trap = (2, instruction)
+            elif opcode == 0x63:
+                take = funct3 == 1 and registers[rs1] != registers[rs2]
+                take |= funct3 == 6 and registers[rs1] < registers[rs2]
+                if take:
+                    target = (pc + branch_immediate(instruction)) & MASK32
+                    if target & 3:
+                        trap = (0, target)
+                    else:
+                        next_pc = target
+            elif opcode == 0x73 and funct3 in (1, 2):
+                address = instruction >> 20
+                if address not in csrs:
+                    trap = (2, instruction)
+                else:
+                    old_value = csrs[address]
+                    operand = registers[rs1]
+                    if funct3 == 1 or operand != 0:
+                        csrs[address] = operand if funct3 == 1 else old_value | operand
+                    registers[rd] = old_value
+            elif instruction == 0x00000073:
+                trap = (8 if privilege == 0 else 9 if privilege == 1 else 11, 0)
+            elif instruction == 0x30200073 and privilege == 3:
+                previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 7) & 1
+                previous_privilege = (csrs[CSR_MSTATUS] >> 11) & 3
+                csrs[CSR_MSTATUS] = (
+                    (csrs[CSR_MSTATUS] & ~0x1888)
+                    | (previous_interrupt_enable << 3)
+                    | (1 << 7)
+                )
+                privilege = previous_privilege
+                next_pc = csrs[CSR_MEPC]
+            elif instruction == 0x10200073 and privilege >= 1:
+                previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 5) & 1
+                previous_privilege = (csrs[CSR_MSTATUS] >> 8) & 1
+                csrs[CSR_MSTATUS] = (
+                    (csrs[CSR_MSTATUS] & ~0x122)
+                    | (previous_interrupt_enable << 1)
+                    | (1 << 5)
+                )
+                privilege = previous_privilege
+                next_pc = csrs[CSR_SEPC]
+            elif instruction == 0x00100073:
+                next_pc = pc
+                status = 1
             else:
-                raise AssertionError(f"unexpected atomic function {atomic_function}")
-        elif opcode == 0x63:
-            take = funct3 == 1 and registers[rs1] != registers[rs2]
-            take |= funct3 == 6 and registers[rs1] < registers[rs2]
-            if take:
-                next_pc = (pc + branch_immediate(instruction)) & MASK32
-        elif opcode == 0x73 and funct3 in (1, 2):
-            address = instruction >> 20
-            old_value = csrs[address]
-            operand = registers[rs1]
-            if funct3 == 1 or operand != 0:
-                csrs[address] = operand if funct3 == 1 else old_value | operand
-            registers[rd] = old_value
-        elif instruction == 0x00000073:
-            cause = 8 if privilege == 0 else 9 if privilege == 1 else 11
+                trap = (2, instruction)
+
+        if trap is not None:
+            cause, trap_value = trap
             delegated = privilege != 3 and (csrs[CSR_MEDELEG] >> cause) & 1
             if delegated:
                 supervisor_interrupt_enable = (csrs[CSR_MSTATUS] >> 1) & 1
@@ -246,7 +338,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                 )
                 csrs[CSR_SEPC] = pc
                 csrs[CSR_SCAUSE] = cause
-                csrs[CSR_STVAL] = 0
+                csrs[CSR_STVAL] = trap_value
                 privilege = 1
                 next_pc = csrs[CSR_STVEC] & ~3
             else:
@@ -258,39 +350,13 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                 )
                 csrs[CSR_MEPC] = pc
                 csrs[CSR_MCAUSE] = cause
-                csrs[CSR_MTVAL] = 0
+                csrs[CSR_MTVAL] = trap_value
                 privilege = 3
                 next_pc = csrs[CSR_MTVEC] & ~3
-        elif instruction == 0x30200073 and privilege == 3:
-            previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 7) & 1
-            previous_privilege = (csrs[CSR_MSTATUS] >> 11) & 3
-            csrs[CSR_MSTATUS] = (
-                (csrs[CSR_MSTATUS] & ~0x1888)
-                | (previous_interrupt_enable << 3)
-                | (1 << 7)
-            )
-            privilege = previous_privilege
-            next_pc = csrs[CSR_MEPC]
-        elif instruction == 0x10200073 and privilege >= 1:
-            previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 5) & 1
-            previous_privilege = (csrs[CSR_MSTATUS] >> 8) & 1
-            csrs[CSR_MSTATUS] = (
-                (csrs[CSR_MSTATUS] & ~0x122)
-                | (previous_interrupt_enable << 1)
-                | (1 << 5)
-            )
-            privilege = previous_privilege
-            next_pc = csrs[CSR_SEPC]
-        elif instruction == 0x00100073:
-            next_pc = pc
-            status = 1
-        else:
-            raise AssertionError(f"unexpected instruction 0x{instruction:08x} at 0x{pc:08x}")
 
         registers[0] = 0
         pc = next_pc
         cycle += 1
-
     return registers, memory, csrs, pc, cycle, status, privilege
 
 
@@ -325,23 +391,26 @@ def main() -> None:
     assert registers[22] == 9
     assert registers[24] == 9
     assert registers[25] == 16
-    assert registers[27] == 1
-    assert registers[29] == 9
-    assert struct.unpack_from("<I", memory, 512)[0] == 16
+    assert registers[27] == 8
+    assert registers[29] == 0xFEF0
+    assert struct.unpack_from("<I", memory, 1024)[0] == 16
     assert csrs[CSR_MSCRATCH] == 126
-    assert csrs[CSR_MTVEC] == 0x144
-    assert csrs[CSR_MEPC] == 0xF0
-    assert csrs[CSR_MCAUSE] == 11
-    assert csrs[CSR_MEDELEG] == 0x200
-    assert csrs[CSR_STVEC] == 0x158
-    assert csrs[CSR_SEPC] == 0xF8
-    assert csrs[CSR_SCAUSE] == 9
+    assert csrs[CSR_MTVEC] == 0x274
+    assert csrs[CSR_MEPC] == 0x114
+    assert csrs[CSR_MCAUSE] == 4
+    assert csrs[CSR_MTVAL] == 1
+    assert csrs[CSR_MEDELEG] == 0x2F7
+    assert csrs[CSR_STVEC] == 0x288
+    assert csrs[CSR_SSCRATCH] == 0x220
+    assert csrs[CSR_SEPC] == 0x220
+    assert csrs[CSR_SCAUSE] == 1
+    assert csrs[CSR_STVAL] == 0xFEF0
     assert csrs[CSR_MSTATUS] == 0xA0
     assert privilege == 1
-    assert pc == 0x12C
-    assert cycle == 2386
+    assert pc == 0x25C
+    assert cycle == 2526
     assert status == 1
-    print("RV32IMA + M/S trap demo OK: self-test passed, 576 framebuffer stores, 2386 instructions")
+    print("RV32IMA synchronous traps OK: 8 exception paths, 576 framebuffer stores, 2526 instructions")
 
 
 if __name__ == "__main__":
