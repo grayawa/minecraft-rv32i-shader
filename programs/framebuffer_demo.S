@@ -52,7 +52,7 @@ _start:
     bne   x25, x23, self_test_failed
 
     # Exercise M-mode ECALL and load-address-misaligned trap entry.
-    addi  x26, x0, 628
+    addi  x26, x0, 692
     csrrw x0, mtvec, x26
     addi  x27, x0, 0
     ecall
@@ -72,13 +72,34 @@ _start:
     addi  x30, x0, 1
     bne   x29, x30, self_test_failed
 
-    # Delegate synchronous exceptions and enter S-mode through MRET.
-    addi  x26, x0, 648
+    # Build an Sv32 root table at 0xa000 and a level-zero table at 0xb000.
+    # Virtual pages 0x40000000 and 0x40001000 map to physical pages 0 and 1.
+    lui   x17, 0xa
+    lui   x18, 0xb
+    lui   x19, 0x3
+    addi  x19, x19, -1023
+    sw    x19, 1024(x17)
+    addi  x19, x0, 0x4b
+    sw    x19, 0(x18)
+    addi  x19, x0, 0x4c7
+    sw    x19, 4(x18)
+
+    # Configure virtual trap vectors, delegation, and the Sv32 root PPN.
+    lui   x26, 0x40000
+    addi  x26, x26, 712
     csrrw x0, stvec, x26
-    addi  x26, x0, 0x2f7
+    lui   x26, 0xb
+    addi  x26, x26, 0x2f7
     csrrw x0, medeleg, x26
-    addi  x26, x0, 276
+    lui   x26, 0x40000
+    addi  x26, x26, 340
     csrrw x0, mepc, x26
+    lui   x26, 0x80000
+    addi  x26, x26, 10
+    csrrw x0, satp, x26
+    sfence.vma x0, x0
+
+    # Enter S-mode at virtual address 0x40000154.
     lui   x26, 0x1
     addi  x26, x26, -2048
     csrrw x0, mstatus, x26
@@ -126,14 +147,13 @@ supervisor_test:
     addi  x30, x0, 2
     bne   x29, x30, self_test_failed
 
-    # 0x0000fef0 is the first byte beyond the emulated RAM window.
-    lui   x26, 0x10
-    addi  x26, x26, -272
+    # Check load and store page faults on an unmapped virtual page.
+    lui   x26, 0x50000
     lw    x0, 0(x26)
     addi  x28, x0, 5
     bne   x27, x28, self_test_failed
     csrrs x29, scause, x0
-    addi  x30, x0, 5
+    addi  x30, x0, 13
     bne   x29, x30, self_test_failed
     csrrs x29, stval, x0
     bne   x29, x26, self_test_failed
@@ -142,7 +162,7 @@ supervisor_test:
     addi  x28, x0, 6
     bne   x27, x28, self_test_failed
     csrrs x29, scause, x0
-    addi  x30, x0, 7
+    addi  x30, x0, 15
     bne   x29, x30, self_test_failed
     csrrs x29, stval, x0
     bne   x29, x26, self_test_failed
@@ -159,26 +179,27 @@ supervisor_test:
     addi  x30, x0, 2
     bne   x29, x30, self_test_failed
 
-    # Check an instruction-access fault and resume through sscratch.
-    addi  x26, x0, 544
+    # Check an instruction page fault and resume through sscratch.
+    lui   x26, 0x40000
+    addi  x26, x26, 604
     csrrw x0, sscratch, x26
-    lui   x26, 0x10
-    addi  x26, x26, -272
+    lui   x26, 0x50000
     jalr  x0, 0(x26)
 
 fetch_resume:
     addi  x28, x0, 8
     bne   x27, x28, self_test_failed
     csrrs x29, scause, x0
-    addi  x30, x0, 1
+    addi  x30, x0, 12
     bne   x29, x30, self_test_failed
     csrrs x29, stval, x0
     bne   x29, x26, self_test_failed
+    sfence.vma x0, x0
 
-    # x1 traverses the framebuffer from 0x1000 to 0x18ff.
-    lui   x1, 0x1
+    # x1 traverses the virtual framebuffer mapping.
+    lui   x1, 0x40001
     addi  x2, x0, 1
-    lui   x6, 0x2
+    lui   x6, 0x40002
     addi  x6, x6, -1792
 
 fill_framebuffer:
@@ -189,13 +210,13 @@ fill_framebuffer:
     ebreak
 
 self_test_failed:
-    lui   x1, 0x1
+    lui   x1, 0x40001
     lui   x2, 0xdeadc
     addi  x2, x2, -273
     sw    x2, 0(x1)
     ebreak
 
-    .org 628
+    .org 692
 machine_trap_handler:
     addi  x27, x27, 1
     csrrs x31, mepc, x0
@@ -203,11 +224,11 @@ machine_trap_handler:
     csrrw x0, mepc, x31
     mret
 
-    .org 648
+    .org 712
 supervisor_trap_handler:
     addi  x27, x27, 1
     csrrs x30, scause, x0
-    addi  x31, x0, 1
+    addi  x31, x0, 12
     bne   x30, x31, supervisor_normal_return
     csrrs x31, sscratch, x0
     csrrw x0, sepc, x31

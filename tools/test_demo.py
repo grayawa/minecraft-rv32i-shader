@@ -23,25 +23,30 @@ CSR_SSCRATCH = 0x140
 CSR_SEPC = 0x141
 CSR_SCAUSE = 0x142
 CSR_STVAL = 0x143
+CSR_SATP = 0x180
 
 EXPECTED_PROGRAM = [
     0x01500193, 0x00600213, 0x024182B3, 0x02419333,
     0x0241A3B3, 0x0241B433, 0x0241C4B3, 0x0241D533,
-    0x0241E5B3, 0x0241F633, 0x07E00693, 0x22D29A63,
-    0x22031863, 0x22039663, 0x22041463, 0x00300713,
-    0x22E49063, 0x20E51E63, 0x20E59C63, 0x20E61A63,
-    0x340297F3, 0x34002873, 0x20079463, 0x20581263,
+    0x0241E5B3, 0x0241F633, 0x07E00693, 0x26D29A63,
+    0x26031863, 0x26039663, 0x26041463, 0x00300713,
+    0x26E49063, 0x24E51E63, 0x24E59C63, 0x24E61A63,
+    0x340297F3, 0x34002873, 0x24079463, 0x24581263,
     0x40000893, 0x00700913, 0x0128A023, 0x1008A9AF,
     0x00900A13, 0x1948AAAF, 0x0008AB03, 0x00700B93,
-    0x1F799063, 0x1C0A9E63, 0x00900B93, 0x1D7B1A63,
-    0x0128AC2F, 0x0008AC83, 0x1D7C1463, 0x01000B93,
-    0x1D7C9063, 0x27400D13, 0x305D1073, 0x00000D93,
-    0x00000073, 0x00100E13, 0x1BCD9463, 0x34202EF3,
-    0x00B00F13, 0x19EE9E63, 0x00102003, 0x00200E13,
-    0x19CD9863, 0x34202EF3, 0x00400F13, 0x19EE9263,
-    0x34302EF3, 0x00100F13, 0x17EE9C63, 0x28800D13,
-    0x105D1073, 0x2F700D13, 0x302D1073, 0x11400D13,
-    0x341D1073, 0x00001D37, 0x800D0D13, 0x300D1073,
+    0x23799063, 0x200A9E63, 0x00900B93, 0x217B1A63,
+    0x0128AC2F, 0x0008AC83, 0x217C1463, 0x01000B93,
+    0x217C9063, 0x2B400D13, 0x305D1073, 0x00000D93,
+    0x00000073, 0x00100E13, 0x1FCD9463, 0x34202EF3,
+    0x00B00F13, 0x1DEE9E63, 0x00102003, 0x00200E13,
+    0x1DCD9863, 0x34202EF3, 0x00400F13, 0x1DEE9263,
+    0x34302EF3, 0x00100F13, 0x1BEE9C63, 0x0000A8B7,
+    0x0000B937, 0x000039B7, 0xC0198993, 0x4138A023,
+    0x04B00993, 0x01392023, 0x4C700993, 0x01392223,
+    0x40000D37, 0x2C8D0D13, 0x105D1073, 0x0000BD37,
+    0x2F7D0D13, 0x302D1073, 0x40000D37, 0x154D0D13,
+    0x341D1073, 0x80000D37, 0x00AD0D13, 0x180D1073,
+    0x12000073, 0x00001D37, 0x800D0D13, 0x300D1073,
     0x30200073, 0x00000D93, 0x00000073, 0x00100E13,
     0x15CD9063, 0x14202EF3, 0x00900F13, 0x13EE9A63,
     0xFFFFFFFF, 0x00200E13, 0x13CD9463, 0x14202EF3,
@@ -50,26 +55,28 @@ EXPECTED_PROGRAM = [
     0x14202EF3, 0x00400F13, 0x0FEE9C63, 0x14302EF3,
     0x00100F13, 0x0FEE9663, 0x00002123, 0x00400E13,
     0x0FCD9063, 0x14202EF3, 0x00600F13, 0x0DEE9A63,
-    0x14302EF3, 0x00200F13, 0x0DEE9463, 0x00010D37,
-    0xEF0D0D13, 0x000D2003, 0x00500E13, 0x0BCD9A63,
-    0x14202EF3, 0x00500F13, 0x0BEE9463, 0x14302EF3,
-    0x0BAE9063, 0x000D2023, 0x00600E13, 0x09CD9A63,
-    0x14202EF3, 0x00700F13, 0x09EE9463, 0x14302EF3,
-    0x09AE9063, 0x00200D13, 0x000D0067, 0x00700E13,
-    0x07CD9863, 0x14202EF3, 0x00000F13, 0x07EE9263,
-    0x14302EF3, 0x00200F13, 0x05EE9C63, 0x22000D13,
-    0x140D1073, 0x00010D37, 0xEF0D0D13, 0x000D0067,
-    0x00800E13, 0x03CD9E63, 0x14202EF3, 0x00100F13,
-    0x03EE9863, 0x14302EF3, 0x03AE9463, 0x000010B7,
-    0x00100113, 0x00002337, 0x90030313, 0x0020A023,
+    0x14302EF3, 0x00200F13, 0x0DEE9463, 0x50000D37,
+    0x000D2003, 0x00500E13, 0x0BCD9C63, 0x14202EF3,
+    0x00D00F13, 0x0BEE9663, 0x14302EF3, 0x0BAE9263,
+    0x000D2023, 0x00600E13, 0x09CD9C63, 0x14202EF3,
+    0x00F00F13, 0x09EE9663, 0x14302EF3, 0x09AE9263,
+    0x00200D13, 0x000D0067, 0x00700E13, 0x07CD9A63,
+    0x14202EF3, 0x00000F13, 0x07EE9463, 0x14302EF3,
+    0x00200F13, 0x05EE9E63, 0x40000D37, 0x25CD0D13,
+    0x140D1073, 0x50000D37, 0x000D0067, 0x00800E13,
+    0x05CD9063, 0x14202EF3, 0x00C00F13, 0x03EE9A63,
+    0x14302EF3, 0x03AE9663, 0x12000073, 0x400010B7,
+    0x00100113, 0x40002337, 0x90030313, 0x0020A023,
     0x00408093, 0x00110113, 0xFE60EAE3, 0x00100073,
-    0x000010B7, 0xDEADC137, 0xEEF10113, 0x0020A023,
+    0x400010B7, 0xDEADC137, 0xEEF10113, 0x0020A023,
     0x00100073, 0x001D8D93, 0x34102FF3, 0x004F8F93,
     0x341F9073, 0x30200073, 0x001D8D93, 0x14202F73,
-    0x00100F93, 0x01FF1863, 0x14002FF3, 0x141F9073,
+    0x00C00F93, 0x01FF1863, 0x14002FF3, 0x141F9073,
     0x10200073, 0x14102FF3, 0x004F8F93, 0x141F9073,
     0x10200073,
 ]
+
+
 
 
 def signed(value: int) -> int:
@@ -175,6 +182,94 @@ def branch_immediate(instruction: int) -> int:
     return sign_extend(value, 13)
 
 
+def translate_address(
+    memory: bytearray,
+    csrs: dict[int, int],
+    virtual_address: int,
+    access_type: int,
+    privilege: int,
+) -> int | None:
+    satp = csrs[CSR_SATP]
+    if privilege == 3 or satp >> 31 == 0:
+        return virtual_address
+
+    table_address = (satp & 0x003FFFFF) << 12
+    vpn = ((virtual_address >> 12) & 0x3FF, (virtual_address >> 22) & 0x3FF)
+    page_offset = virtual_address & 0xFFF
+
+    for level in (1, 0):
+        pte_address = table_address + vpn[level] * 4
+        if pte_address > RAM_BYTES - 4:
+            return None
+        pte = struct.unpack_from("<I", memory, pte_address)[0]
+        valid = bool(pte & 0x01)
+        readable = bool(pte & 0x02)
+        writable = bool(pte & 0x04)
+        executable = bool(pte & 0x08)
+        if not valid or (writable and not readable):
+            return None
+        if readable or executable:
+            break
+        table_address = (pte >> 10) << 12
+    else:
+        return None
+
+    user_page = bool(pte & 0x10)
+    accessed = bool(pte & 0x40)
+    dirty = bool(pte & 0x80)
+    mxr = bool(csrs[CSR_MSTATUS] & (1 << 19))
+    sum_access = bool(csrs[CSR_MSTATUS] & (1 << 18))
+    privilege_allowed = (
+        user_page
+        if privilege == 0
+        else (not user_page if access_type == 0 else not user_page or sum_access)
+    )
+    access_allowed = (
+        executable
+        if access_type == 0
+        else readable or (mxr and executable)
+        if access_type == 1
+        else writable
+    )
+    if not privilege_allowed or not access_allowed or not accessed:
+        return None
+    if access_type == 2 and not dirty:
+        return None
+
+    physical_page_number = pte >> 10
+    if level == 1:
+        if physical_page_number & 0x3FF:
+            return None
+        return (
+            ((physical_page_number & ~0x3FF) << 12)
+            | (vpn[0] << 12)
+            | page_offset
+        ) & MASK32
+    return ((physical_page_number << 12) | page_offset) & MASK32
+
+
+def verify_sv32_translation() -> None:
+    memory = bytearray(RAM_BYTES)
+    csrs = {CSR_SATP: 0x8000000A, CSR_MSTATUS: 0}
+    struct.pack_into("<I", memory, 0xA400, 0x2C01)
+    struct.pack_into("<I", memory, 0xA800, 0xC7)
+    struct.pack_into("<I", memory, 0xB000, 0x4B)
+    struct.pack_into("<I", memory, 0xB004, 0x4D7)
+    struct.pack_into("<I", memory, 0xB008, 0x859)
+
+    assert translate_address(memory, csrs, 0x40000020, 0, 1) == 0x20
+    assert translate_address(memory, csrs, 0x40000020, 1, 1) == 0x20
+    assert translate_address(memory, csrs, 0x40001020, 1, 1) is None
+    csrs[CSR_MSTATUS] |= 1 << 18
+    assert translate_address(memory, csrs, 0x40001020, 1, 1) == 0x1020
+    assert translate_address(memory, csrs, 0x40001020, 2, 0) == 0x1020
+    assert translate_address(memory, csrs, 0x40000020, 0, 0) is None
+    assert translate_address(memory, csrs, 0x40002020, 1, 0) is None
+    csrs[CSR_MSTATUS] |= 1 << 19
+    assert translate_address(memory, csrs, 0x40002020, 1, 0) == 0x2020
+    assert translate_address(memory, csrs, 0x80003004, 1, 1) == 0x3004
+
+
 def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], int, int, int, int]:
     registers = [0] * 32
     memory = bytearray(RAM_BYTES)
@@ -191,6 +286,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
         CSR_SEPC: 0,
         CSR_SCAUSE: 0,
         CSR_STVAL: 0,
+        CSR_SATP: 0,
     }
     privilege = 3
     reservation: int | None = None
@@ -207,10 +303,21 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
 
         if pc & 3:
             trap = (0, pc)
-        elif pc > RAM_BYTES - 4:
-            trap = (1, pc)
         else:
-            instruction = struct.unpack_from("<I", memory, pc)[0]
+            instruction_address = translate_address(memory, csrs, pc, 0, privilege)
+            if instruction_address is None:
+                trap = (12, pc)
+                instruction_address = 0
+            elif instruction_address > RAM_BYTES - 4:
+                trap = (1, pc)
+                instruction_address = 0
+            instruction = (
+                struct.unpack_from("<I", memory, instruction_address)[0]
+                if trap is None
+                else 0
+            )
+
+        if trap is None:
             opcode = instruction & 0x7F
             rd = (instruction >> 7) & 0x1F
             funct3 = (instruction >> 12) & 7
@@ -238,47 +345,67 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                 address = (registers[rs1] + sign_extend(immediate, 12)) & MASK32
                 if address & 3:
                     trap = (6, address)
-                elif address > RAM_BYTES - 4:
-                    trap = (7, address)
                 else:
-                    struct.pack_into("<I", memory, address, registers[rs2])
-                    reservation = None
+                    physical_address = translate_address(memory, csrs, address, 2, privilege)
+                    if physical_address is None:
+                        trap = (15, address)
+                    elif physical_address > RAM_BYTES - 4:
+                        trap = (7, address)
+                    else:
+                        struct.pack_into("<I", memory, physical_address, registers[rs2])
+                        reservation = None
             elif opcode == 0x03 and funct3 == 2:
                 immediate = sign_extend(instruction >> 20, 12)
                 address = (registers[rs1] + immediate) & MASK32
                 if address & 3:
                     trap = (4, address)
-                elif address > RAM_BYTES - 4:
-                    trap = (5, address)
                 else:
-                    registers[rd] = struct.unpack_from("<I", memory, address)[0]
+                    physical_address = translate_address(memory, csrs, address, 1, privilege)
+                    if physical_address is None:
+                        trap = (13, address)
+                    elif physical_address > RAM_BYTES - 4:
+                        trap = (5, address)
+                    else:
+                        registers[rd] = struct.unpack_from("<I", memory, physical_address)[0]
             elif opcode == 0x2F and funct3 == 2:
                 address = registers[rs1]
                 atomic_function = instruction >> 27
                 load_reservation = atomic_function == 2 and rs2 == 0
+                access_type = 1 if load_reservation else 2
                 if address & 3:
                     trap = (4 if load_reservation else 6, address)
-                elif address > RAM_BYTES - 4:
-                    trap = (5 if load_reservation else 7, address)
                 else:
-                    old_value = struct.unpack_from("<I", memory, address)[0]
-                    if load_reservation:
-                        registers[rd] = old_value
-                        reservation = address
-                    elif atomic_function == 3:
-                        success = reservation == address
-                        registers[rd] = 0 if success else 1
-                        if success:
-                            struct.pack_into("<I", memory, address, registers[rs2])
-                        reservation = None
-                    elif atomic_function == 0:
-                        registers[rd] = old_value
-                        struct.pack_into(
-                            "<I", memory, address, (old_value + registers[rs2]) & MASK32
-                        )
-                        reservation = None
+                    physical_address = translate_address(
+                        memory, csrs, address, access_type, privilege
+                    )
+                    if physical_address is None:
+                        trap = (13 if load_reservation else 15, address)
+                    elif physical_address > RAM_BYTES - 4:
+                        trap = (5 if load_reservation else 7, address)
                     else:
-                        trap = (2, instruction)
+                        old_value = struct.unpack_from("<I", memory, physical_address)[0]
+                        if load_reservation:
+                            registers[rd] = old_value
+                            reservation = physical_address
+                        elif atomic_function == 3:
+                            success = reservation == physical_address
+                            registers[rd] = 0 if success else 1
+                            if success:
+                                struct.pack_into(
+                                    "<I", memory, physical_address, registers[rs2]
+                                )
+                            reservation = None
+                        elif atomic_function == 0:
+                            registers[rd] = old_value
+                            struct.pack_into(
+                                "<I",
+                                memory,
+                                physical_address,
+                                (old_value + registers[rs2]) & MASK32,
+                            )
+                            reservation = None
+                        else:
+                            trap = (2, instruction)
             elif opcode == 0x63:
                 take = funct3 == 1 and registers[rs1] != registers[rs2]
                 take |= funct3 == 6 and registers[rs1] < registers[rs2]
@@ -323,6 +450,8 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
             elif instruction == 0x00100073:
                 next_pc = pc
                 status = 1
+            elif instruction & 0xFE007FFF == 0x12000073 and privilege >= 1:
+                pass
             else:
                 trap = (2, instruction)
 
@@ -375,6 +504,7 @@ def main() -> None:
     program = [shader_words[index] for index in range(len(EXPECTED_PROGRAM))]
     assert program == EXPECTED_PROGRAM
     verify_high_multiply()
+    verify_sv32_translation()
 
     registers, memory, csrs, pc, cycle, status, privilege = run_demo(program)
     values = [
@@ -386,31 +516,35 @@ def main() -> None:
     assert registers[9:13] == [3, 3, 3, 3]
     assert registers[15] == 0
     assert registers[16] == 126
-    assert registers[19] == 7
+    assert registers[17:20] == [0xA000, 0xB000, 0x4C7]
     assert registers[21] == 0
     assert registers[22] == 9
     assert registers[24] == 9
     assert registers[25] == 16
     assert registers[27] == 8
-    assert registers[29] == 0xFEF0
+    assert registers[29] == 0x50000000
     assert struct.unpack_from("<I", memory, 1024)[0] == 16
+    assert struct.unpack_from("<I", memory, 0xA400)[0] == 0x2C01
+    assert struct.unpack_from("<I", memory, 0xB000)[0] == 0x4B
+    assert struct.unpack_from("<I", memory, 0xB004)[0] == 0x4C7
     assert csrs[CSR_MSCRATCH] == 126
-    assert csrs[CSR_MTVEC] == 0x274
-    assert csrs[CSR_MEPC] == 0x114
+    assert csrs[CSR_MTVEC] == 0x2B4
+    assert csrs[CSR_MEPC] == 0x40000154
     assert csrs[CSR_MCAUSE] == 4
     assert csrs[CSR_MTVAL] == 1
-    assert csrs[CSR_MEDELEG] == 0x2F7
-    assert csrs[CSR_STVEC] == 0x288
-    assert csrs[CSR_SSCRATCH] == 0x220
-    assert csrs[CSR_SEPC] == 0x220
-    assert csrs[CSR_SCAUSE] == 1
-    assert csrs[CSR_STVAL] == 0xFEF0
+    assert csrs[CSR_MEDELEG] == 0xB2F7
+    assert csrs[CSR_STVEC] == 0x400002C8
+    assert csrs[CSR_SSCRATCH] == 0x4000025C
+    assert csrs[CSR_SEPC] == 0x4000025C
+    assert csrs[CSR_SCAUSE] == 12
+    assert csrs[CSR_STVAL] == 0x50000000
+    assert csrs[CSR_SATP] == 0x8000000A
     assert csrs[CSR_MSTATUS] == 0xA0
     assert privilege == 1
-    assert pc == 0x25C
-    assert cycle == 2526
+    assert pc == 0x4000029C
+    assert cycle == 2542
     assert status == 1
-    print("RV32IMA synchronous traps OK: 8 exception paths, 576 framebuffer stores, 2526 instructions")
+    print("RV32IMA Sv32 OK: 2 mapped pages, 3 page-fault paths, 576 framebuffer stores, 2542 instructions")
 
 
 if __name__ == "__main__":
