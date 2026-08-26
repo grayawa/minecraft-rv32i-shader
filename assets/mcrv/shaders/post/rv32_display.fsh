@@ -99,7 +99,7 @@ float drawTitle(vec2 p, vec2 origin, float scale) {
                  : index == 3 ? 86  // V
                  : index == 4 ? 51  // 3
                  : index == 5 ? 50  // 2
-                 : 77;              // M
+                 : 65;              // A
         vec2 glyphOrigin = origin + vec2(float(index) * 5.0 * scale, 0.0);
         ink = max(ink, glyphPixel(p, glyphOrigin, code, scale));
     }

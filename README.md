@@ -1,6 +1,6 @@
-# Minecraft RV32IM Shader
+# Minecraft RV32IMA Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IM、Zicsr 和面向机器态软件的 CSR bank。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、机器态 CSR 和机器态 trap 返回路径。
 
 CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
@@ -8,7 +8,9 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 - RV32I Base Integer Instruction Set 2.1 的 40 条基础指令
 - RV32M 的八条乘除法指令
+- RV32A 的十一条 32 位原子指令
 - Zicsr 的六种 CSR 读写指令
+- `ECALL` 机器态 trap entry 与 `MRET`
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
 - 65,264 字节小端 RAM
@@ -17,7 +19,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - 32 × 18 单词显存，基地址为 `0x00001000`
 - 约 120 指令/秒的 60 FPS 默认执行速度
 - PC、周期、状态、`x1`–`x8`、显存与 RAM 活动仪表盘
-- 内置 RV32IM/Zicsr 自检与显存填充程序
+- 内置 RV32IMA、CSR、trap 自检与显存填充程序
 - 平面 RV32 binary 到 GLSL ROM 的转换工具
 - 原版资源包运行方式
 
@@ -29,7 +31,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 1. 下载 [`MinecraftRV32IShader-26.3-snapshot-5.zip`](dist/MinecraftRV32IShader-26.3-snapshot-5.zip)。
 2. 将 ZIP 放入当前 Minecraft 实例的 `resourcepacks` 目录。
-3. 在“选项 → 资源包”中启用 **Minecraft RV32IM**。
+3. 在“选项 → 资源包”中启用 **Minecraft RV32IMA**。
 4. 进入具有命令权限的世界。
 5. 执行：
 
@@ -47,7 +49,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 ## 内置程序
 
-内置程序首先验证八条 RV32M 指令，并通过 `mscratch` 验证 `CSRRW` 和 `CSRRS`。验证成功后执行显存填充循环：
+内置程序首先验证八条 RV32M 指令、机器 CSR、LR/SC reservation、`AMOADD.W`，然后通过 `mtvec` 执行一次 `ECALL` trap 并以 `MRET` 返回。验证成功后执行显存填充循环：
 
 ```asm
 lui   x1, 0x1
@@ -63,7 +65,7 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2333 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
+程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2364 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
 ## 指令范围
 
@@ -77,12 +79,13 @@ ebreak
 | Immediate ALU | `ADDI`, `SLTI`, `SLTIU`, `XORI`, `ORI`, `ANDI`, `SLLI`, `SRLI`, `SRAI` |
 | Register ALU | `ADD`, `SUB`, `SLL`, `SLT`, `SLTU`, `XOR`, `SRL`, `SRA`, `OR`, `AND` |
 | Multiply/divide | `MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU` |
+| Atomic | `LR.W`, `SC.W`, `AMOSWAP.W`, `AMOADD.W`, `AMOXOR.W`, `AMOAND.W`, `AMOOR.W`, `AMOMIN.W`, `AMOMAX.W`, `AMOMINU.W`, `AMOMAXU.W` |
 | CSR | `CSRRW`, `CSRRS`, `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI` |
-| Environment | `FENCE`, `FENCE.I`, `ECALL`, `EBREAK` |
+| Environment | `FENCE`, `FENCE.I`, `ECALL`, `EBREAK`, `MRET` |
 
-CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip` 和 `satp`。`misa` 返回 RV32IM 能力位，周期计数器和 hart ID 通过对应 CSR 读取。
+CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip` 和 `satp`。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级与 LR/SC reservation。
 
-当前执行环境聚焦机器态裸机程序。特权级切换、trap、Sv32 MMU、RV32A、CLINT 和 UART 构成 Linux 启动路径的后续实现层。
+当前执行环境覆盖机器态裸机程序与同步 `ECALL` trap。S/U 特权级、delegation、其余同步异常 trap、Sv32 MMU、CLINT 和 UART 构成 Linux 启动路径的后续实现层。
 
 ## 纹理机器布局
 
@@ -100,7 +103,7 @@ A = bits 31..24
 | 单词索引 | 内容 |
 | --- | --- |
 | `0`–`16315` | RAM，字节地址 `0x00000000`–`0x0000feef` |
-| `16316`–`16347` | 机器态 CSR bank |
+| `16316`–`16347` | CSR、特权级与 atomic reservation 状态 |
 | `16348`–`16379` | `x0`–`x31` |
 | `16380` | CPU 状态 |
 | `16381` | 周期计数器 |
@@ -159,7 +162,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IM + Zicsr demo OK: self-test passed, 576 framebuffer stores, 2333 instructions
+RV32IMA + machine trap demo OK: self-test passed, 576 framebuffer stores, 2364 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

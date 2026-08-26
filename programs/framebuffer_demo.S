@@ -32,6 +32,36 @@ _start:
     bne   x15, x0, self_test_failed
     bne   x16, x5, self_test_failed
 
+    # Validate LR/SC reservation and an atomic read-modify-write operation.
+    addi  x17, x0, 512
+    addi  x18, x0, 7
+    sw    x18, 0(x17)
+    lr.w  x19, (x17)
+    addi  x20, x0, 9
+    sc.w  x21, x20, (x17)
+    lw    x22, 0(x17)
+    addi  x23, x0, 7
+    bne   x19, x23, self_test_failed
+    bne   x21, x0, self_test_failed
+    addi  x23, x0, 9
+    bne   x22, x23, self_test_failed
+    amoadd.w x24, x18, (x17)
+    lw    x25, 0(x17)
+    bne   x24, x23, self_test_failed
+    addi  x23, x0, 16
+    bne   x25, x23, self_test_failed
+
+    # Route an M-mode ECALL through mtvec and resume through MRET.
+    addi  x26, x0, 256
+    csrrw x0, mtvec, x26
+    addi  x27, x0, 0
+    ecall
+    addi  x28, x0, 1
+    bne   x27, x28, self_test_failed
+    csrrs x29, mcause, x0
+    addi  x30, x0, 11
+    bne   x29, x30, self_test_failed
+
     # x1 traverses the framebuffer from 0x1000 to 0x18ff.
     lui   x1, 0x1
     addi  x2, x0, 1
@@ -51,3 +81,11 @@ self_test_failed:
     addi  x2, x2, -273
     sw    x2, 0(x1)
     ebreak
+
+    .org 256
+machine_trap_handler:
+    addi  x27, x0, 1
+    csrrs x31, mepc, x0
+    addi  x31, x31, 4
+    csrrw x0, mepc, x31
+    mret

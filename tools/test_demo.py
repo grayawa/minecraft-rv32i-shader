@@ -1,4 +1,4 @@
-"""Reference execution test for the bundled RV32IM and CSR self-test."""
+"""Reference execution test for the bundled RV32IMA and machine-trap self-test."""
 
 from __future__ import annotations
 
@@ -12,18 +12,31 @@ RAM_BYTES = 16_316 * 4
 FRAMEBUFFER_ADDRESS = 0x1000
 FRAMEBUFFER_WORDS = 32 * 18
 CSR_MSCRATCH = 0x340
+CSR_MSTATUS = 0x300
+CSR_MTVEC = 0x305
+CSR_MEPC = 0x341
+CSR_MCAUSE = 0x342
+CSR_MTVAL = 0x343
 
 EXPECTED_PROGRAM = [
     0x01500193, 0x00600213, 0x024182B3, 0x02419333,
     0x0241A3B3, 0x0241B433, 0x0241C4B3, 0x0241D533,
-    0x0241E5B3, 0x0241F633, 0x07E00693, 0x04D29C63,
-    0x04031A63, 0x04039863, 0x04041663, 0x00300713,
-    0x04E49263, 0x04E51063, 0x02E59E63, 0x02E61C63,
-    0x340297F3, 0x34002873, 0x02079663, 0x02581463,
-    0x000010B7, 0x00100113, 0x00002337, 0x90030313,
-    0x0020A023, 0x00408093, 0x00110113, 0xFE60EAE3,
-    0x00100073, 0x000010B7, 0xDEADC137, 0xEEF10113,
-    0x0020A023, 0x00100073,
+    0x0241E5B3, 0x0241F633, 0x07E00693, 0x0CD29063,
+    0x0A031E63, 0x0A039C63, 0x0A041A63, 0x00300713,
+    0x0AE49663, 0x0AE51463, 0x0AE59263, 0x0AE61063,
+    0x340297F3, 0x34002873, 0x08079A63, 0x08581863,
+    0x20000893, 0x00700913, 0x0128A023, 0x1008A9AF,
+    0x00900A13, 0x1948AAAF, 0x0008AB03, 0x00700B93,
+    0x07799663, 0x060A9463, 0x00900B93, 0x077B1063,
+    0x0128AC2F, 0x0008AC83, 0x057C1A63, 0x01000B93,
+    0x057C9663, 0x10000D13, 0x305D1073, 0x00000D93,
+    0x00000073, 0x00100E13, 0x03CD9A63, 0x34202EF3,
+    0x00B00F13, 0x03EE9463, 0x000010B7, 0x00100113,
+    0x00002337, 0x90030313, 0x0020A023, 0x00408093,
+    0x00110113, 0xFE60EAE3, 0x00100073, 0x000010B7,
+    0xDEADC137, 0xEEF10113, 0x0020A023, 0x00100073,
+    0x00100D93, 0x34102FF3, 0x004F8F93, 0x341F9073,
+    0x30200073,
 ]
 
 
@@ -133,7 +146,16 @@ def branch_immediate(instruction: int) -> int:
 def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], int, int, int]:
     registers = [0] * 32
     memory = bytearray(RAM_BYTES)
-    csrs: dict[int, int] = {CSR_MSCRATCH: 0}
+    csrs: dict[int, int] = {
+        CSR_MSTATUS: 0,
+        CSR_MTVEC: 0,
+        CSR_MSCRATCH: 0,
+        CSR_MEPC: 0,
+        CSR_MCAUSE: 0,
+        CSR_MTVAL: 0,
+    }
+    privilege = 3
+    reservation: int | None = None
     for index, instruction in enumerate(program):
         struct.pack_into("<I", memory, index * 4, instruction)
 
@@ -161,6 +183,30 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
             immediate = ((instruction >> 25) << 5) | ((instruction >> 7) & 0x1F)
             address = (registers[rs1] + sign_extend(immediate, 12)) & MASK32
             struct.pack_into("<I", memory, address, registers[rs2])
+            reservation = None
+        elif opcode == 0x03 and funct3 == 2:
+            immediate = sign_extend(instruction >> 20, 12)
+            address = (registers[rs1] + immediate) & MASK32
+            registers[rd] = struct.unpack_from("<I", memory, address)[0]
+        elif opcode == 0x2F and funct3 == 2:
+            address = registers[rs1]
+            old_value = struct.unpack_from("<I", memory, address)[0]
+            atomic_function = instruction >> 27
+            if atomic_function == 2 and rs2 == 0:
+                registers[rd] = old_value
+                reservation = address
+            elif atomic_function == 3:
+                success = reservation == address
+                registers[rd] = 0 if success else 1
+                if success:
+                    struct.pack_into("<I", memory, address, registers[rs2])
+                reservation = None
+            elif atomic_function == 0:
+                registers[rd] = old_value
+                struct.pack_into("<I", memory, address, (old_value + registers[rs2]) & MASK32)
+                reservation = None
+            else:
+                raise AssertionError(f"unexpected atomic function {atomic_function}")
         elif opcode == 0x63:
             take = funct3 == 1 and registers[rs1] != registers[rs2]
             take |= funct3 == 6 and registers[rs1] < registers[rs2]
@@ -173,6 +219,28 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
             if funct3 == 1 or operand != 0:
                 csrs[address] = operand if funct3 == 1 else old_value | operand
             registers[rd] = old_value
+        elif instruction == 0x00000073:
+            machine_interrupt_enable = (csrs[CSR_MSTATUS] >> 3) & 1
+            csrs[CSR_MSTATUS] = (
+                (csrs[CSR_MSTATUS] & ~0x1888)
+                | (machine_interrupt_enable << 7)
+                | (privilege << 11)
+            )
+            csrs[CSR_MEPC] = pc
+            csrs[CSR_MCAUSE] = 8 if privilege == 0 else 9 if privilege == 1 else 11
+            csrs[CSR_MTVAL] = 0
+            privilege = 3
+            next_pc = csrs[CSR_MTVEC] & ~3
+        elif instruction == 0x30200073 and privilege == 3:
+            previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 7) & 1
+            previous_privilege = (csrs[CSR_MSTATUS] >> 11) & 3
+            csrs[CSR_MSTATUS] = (
+                (csrs[CSR_MSTATUS] & ~0x1888)
+                | (previous_interrupt_enable << 3)
+                | (1 << 7)
+            )
+            privilege = previous_privilege
+            next_pc = csrs[CSR_MEPC]
         elif instruction == 0x00100073:
             next_pc = pc
             status = 1
@@ -212,11 +280,23 @@ def main() -> None:
     assert registers[9:13] == [3, 3, 3, 3]
     assert registers[15] == 0
     assert registers[16] == 126
+    assert registers[19] == 7
+    assert registers[21] == 0
+    assert registers[22] == 9
+    assert registers[24] == 9
+    assert registers[25] == 16
+    assert registers[27] == 1
+    assert registers[29] == 11
+    assert struct.unpack_from("<I", memory, 512)[0] == 16
     assert csrs[CSR_MSCRATCH] == 126
-    assert pc == 0x80
-    assert cycle == 2333
+    assert csrs[CSR_MTVEC] == 0x100
+    assert csrs[CSR_MEPC] == 0xB4
+    assert csrs[CSR_MCAUSE] == 11
+    assert csrs[CSR_MSTATUS] == 0x80
+    assert pc == 0xE8
+    assert cycle == 2364
     assert status == 1
-    print("RV32IM + Zicsr demo OK: self-test passed, 576 framebuffer stores, 2333 instructions")
+    print("RV32IMA + machine trap demo OK: self-test passed, 576 framebuffer stores, 2364 instructions")
 
 
 if __name__ == "__main__":
