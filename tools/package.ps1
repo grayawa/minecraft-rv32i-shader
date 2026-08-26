@@ -2,6 +2,7 @@ param(
     [string]$Output = "dist/MinecraftRV32IShader-26.3-snapshot-5.zip"
 )
 
+$ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $outputPath = Join-Path $projectRoot $Output
 $outputDirectory = Split-Path -Parent $outputPath
@@ -33,7 +34,7 @@ $archive = [System.IO.Compression.ZipFile]::Open(
 )
 try {
     foreach ($file in $files) {
-        $entryName = [System.IO.Path]::GetRelativePath($projectRoot, $file.FullName).Replace('\', '/')
+        $entryName = $file.FullName.Substring($projectRoot.Length).TrimStart([char[]]"\/").Replace('\', '/')
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
             $archive,
             $file.FullName,

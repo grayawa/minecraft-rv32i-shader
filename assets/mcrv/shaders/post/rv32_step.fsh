@@ -42,6 +42,14 @@ const uint CSR_MINSTRET = 0xb02u;
 const uint CSR_CYCLE = 0xc00u;
 const uint CSR_INSTRET = 0xc02u;
 const uint CSR_MHARTID = 0xf14u;
+const uint CSR_SSTATUS = 0x100u;
+const uint CSR_SIE = 0x104u;
+const uint CSR_STVEC = 0x105u;
+const uint CSR_SSCRATCH = 0x140u;
+const uint CSR_SEPC = 0x141u;
+const uint CSR_SCAUSE = 0x142u;
+const uint CSR_STVAL = 0x143u;
+const uint CSR_SIP = 0x144u;
 const uint PRIVILEGE_INDEX = CSR_BASE + 28u;
 const uint RESERVATION_ADDRESS_INDEX = CSR_BASE + 29u;
 const uint RESERVATION_VALID_INDEX = CSR_BASE + 30u;
@@ -122,17 +130,22 @@ uint multiplyHighSigned(uint left, uint right) {
 }
 
 uint csrStateIndex(uint address) {
-    if (address == CSR_MSTATUS) return CSR_BASE + 0u;
+    if (address == CSR_MSTATUS || address == CSR_SSTATUS) return CSR_BASE + 0u;
     if (address == CSR_MEDELEG) return CSR_BASE + 1u;
     if (address == CSR_MIDELEG) return CSR_BASE + 2u;
-    if (address == CSR_MIE) return CSR_BASE + 3u;
+    if (address == CSR_MIE || address == CSR_SIE) return CSR_BASE + 3u;
     if (address == CSR_MTVEC) return CSR_BASE + 4u;
     if (address == CSR_MSCRATCH) return CSR_BASE + 5u;
     if (address == CSR_MEPC) return CSR_BASE + 6u;
     if (address == CSR_MCAUSE) return CSR_BASE + 7u;
     if (address == CSR_MTVAL) return CSR_BASE + 8u;
-    if (address == CSR_MIP) return CSR_BASE + 9u;
+    if (address == CSR_MIP || address == CSR_SIP) return CSR_BASE + 9u;
     if (address == CSR_SATP) return CSR_BASE + 10u;
+    if (address == CSR_STVEC) return CSR_BASE + 11u;
+    if (address == CSR_SSCRATCH) return CSR_BASE + 12u;
+    if (address == CSR_SEPC) return CSR_BASE + 13u;
+    if (address == CSR_SCAUSE) return CSR_BASE + 14u;
+    if (address == CSR_STVAL) return CSR_BASE + 15u;
     return INVALID_INDEX;
 }
 
@@ -150,6 +163,12 @@ bool csrWritable(uint address) {
     return csrStateIndex(address) != INVALID_INDEX;
 }
 
+uint csrWriteMask(uint address) {
+    if (address == CSR_SSTATUS) return 0x000de162u;
+    if (address == CSR_SIE || address == CSR_SIP) return 0x00000222u;
+    return 0xffffffffu;
+}
+
 bool csrAccessible(uint address, uint privilege) {
     uint requiredPrivilege = (address >> 8u) & 0x3u;
     return privilege >= requiredPrivilege;
@@ -163,12 +182,15 @@ uint readCSR(uint address) {
     }
     if (address == CSR_MHARTID) return 0u;
     uint index = csrStateIndex(address);
-    return index == INVALID_INDEX ? 0u : readStateWord(index);
+    uint value = index == INVALID_INDEX ? 0u : readStateWord(index);
+    if (address == CSR_SSTATUS) return value & 0x000de162u;
+    if (address == CSR_SIE || address == CSR_SIP) return value & 0x00000222u;
+    return value;
 }
 
 uint initialProgramWord(uint index) {
-    // The bundled program validates RV32IMA, machine CSR access, ECALL trap
-    // entry, and MRET before filling the framebuffer.
+    // The bundled program validates RV32IMA, M/S CSR access, delegated ECALL
+    // traps, MRET, and SRET before filling the framebuffer.
     if (index == 0u) return 0x01500193u;
     if (index == 1u) return 0x00600213u;
     if (index == 2u) return 0x024182b3u;
@@ -180,19 +202,19 @@ uint initialProgramWord(uint index) {
     if (index == 8u) return 0x0241e5b3u;
     if (index == 9u) return 0x0241f633u;
     if (index == 10u) return 0x07e00693u;
-    if (index == 11u) return 0x0cd29063u;
-    if (index == 12u) return 0x0a031e63u;
-    if (index == 13u) return 0x0a039c63u;
-    if (index == 14u) return 0x0a041a63u;
+    if (index == 11u) return 0x10d29263u;
+    if (index == 12u) return 0x10031063u;
+    if (index == 13u) return 0x0e039e63u;
+    if (index == 14u) return 0x0e041c63u;
     if (index == 15u) return 0x00300713u;
-    if (index == 16u) return 0x0ae49663u;
-    if (index == 17u) return 0x0ae51463u;
-    if (index == 18u) return 0x0ae59263u;
-    if (index == 19u) return 0x0ae61063u;
+    if (index == 16u) return 0x0ee49863u;
+    if (index == 17u) return 0x0ee51663u;
+    if (index == 18u) return 0x0ee59463u;
+    if (index == 19u) return 0x0ee61263u;
     if (index == 20u) return 0x340297f3u;
     if (index == 21u) return 0x34002873u;
-    if (index == 22u) return 0x08079a63u;
-    if (index == 23u) return 0x08581863u;
+    if (index == 22u) return 0x0c079c63u;
+    if (index == 23u) return 0x0c581a63u;
     if (index == 24u) return 0x20000893u;
     if (index == 25u) return 0x00700913u;
     if (index == 26u) return 0x0128a023u;
@@ -201,43 +223,65 @@ uint initialProgramWord(uint index) {
     if (index == 29u) return 0x1948aaafu;
     if (index == 30u) return 0x0008ab03u;
     if (index == 31u) return 0x00700b93u;
-    if (index == 32u) return 0x07799663u;
-    if (index == 33u) return 0x060a9463u;
+    if (index == 32u) return 0x0b799863u;
+    if (index == 33u) return 0x0a0a9663u;
     if (index == 34u) return 0x00900b93u;
-    if (index == 35u) return 0x077b1063u;
+    if (index == 35u) return 0x0b7b1263u;
     if (index == 36u) return 0x0128ac2fu;
     if (index == 37u) return 0x0008ac83u;
-    if (index == 38u) return 0x057c1a63u;
+    if (index == 38u) return 0x097c1c63u;
     if (index == 39u) return 0x01000b93u;
-    if (index == 40u) return 0x057c9663u;
-    if (index == 41u) return 0x10000d13u;
+    if (index == 40u) return 0x097c9863u;
+    if (index == 41u) return 0x14400d13u;
     if (index == 42u) return 0x305d1073u;
     if (index == 43u) return 0x00000d93u;
     if (index == 44u) return 0x00000073u;
     if (index == 45u) return 0x00100e13u;
-    if (index == 46u) return 0x03cd9a63u;
+    if (index == 46u) return 0x07cd9c63u;
     if (index == 47u) return 0x34202ef3u;
     if (index == 48u) return 0x00b00f13u;
-    if (index == 49u) return 0x03ee9463u;
-    if (index == 50u) return 0x000010b7u;
-    if (index == 51u) return 0x00100113u;
-    if (index == 52u) return 0x00002337u;
-    if (index == 53u) return 0x90030313u;
-    if (index == 54u) return 0x0020a023u;
-    if (index == 55u) return 0x00408093u;
-    if (index == 56u) return 0x00110113u;
-    if (index == 57u) return 0xfe60eae3u;
-    if (index == 58u) return 0x00100073u;
-    if (index == 59u) return 0x000010b7u;
-    if (index == 60u) return 0xdeadc137u;
-    if (index == 61u) return 0xeef10113u;
-    if (index == 62u) return 0x0020a023u;
-    if (index == 63u) return 0x00100073u;
-    if (index == 64u) return 0x00100d93u;
-    if (index == 65u) return 0x34102ff3u;
-    if (index == 66u) return 0x004f8f93u;
-    if (index == 67u) return 0x341f9073u;
-    if (index == 68u) return 0x30200073u;
+    if (index == 49u) return 0x07ee9663u;
+    if (index == 50u) return 0x15800d13u;
+    if (index == 51u) return 0x105d1073u;
+    if (index == 52u) return 0x20000d13u;
+    if (index == 53u) return 0x302d1073u;
+    if (index == 54u) return 0x0f000d13u;
+    if (index == 55u) return 0x341d1073u;
+    if (index == 56u) return 0x00001d37u;
+    if (index == 57u) return 0x800d0d13u;
+    if (index == 58u) return 0x300d1073u;
+    if (index == 59u) return 0x30200073u;
+    if (index == 60u) return 0x00000d93u;
+    if (index == 61u) return 0x00000073u;
+    if (index == 62u) return 0x00100e13u;
+    if (index == 63u) return 0x03cd9a63u;
+    if (index == 64u) return 0x14202ef3u;
+    if (index == 65u) return 0x00900f13u;
+    if (index == 66u) return 0x03ee9463u;
+    if (index == 67u) return 0x000010b7u;
+    if (index == 68u) return 0x00100113u;
+    if (index == 69u) return 0x00002337u;
+    if (index == 70u) return 0x90030313u;
+    if (index == 71u) return 0x0020a023u;
+    if (index == 72u) return 0x00408093u;
+    if (index == 73u) return 0x00110113u;
+    if (index == 74u) return 0xfe60eae3u;
+    if (index == 75u) return 0x00100073u;
+    if (index == 76u) return 0x000010b7u;
+    if (index == 77u) return 0xdeadc137u;
+    if (index == 78u) return 0xeef10113u;
+    if (index == 79u) return 0x0020a023u;
+    if (index == 80u) return 0x00100073u;
+    if (index == 81u) return 0x00100d93u;
+    if (index == 82u) return 0x34102ff3u;
+    if (index == 83u) return 0x004f8f93u;
+    if (index == 84u) return 0x341f9073u;
+    if (index == 85u) return 0x30200073u;
+    if (index == 86u) return 0x00100d93u;
+    if (index == 87u) return 0x14102ff3u;
+    if (index == 88u) return 0x004f8f93u;
+    if (index == 89u) return 0x141f9073u;
+    if (index == 90u) return 0x10200073u;
     return 0u;
 }
 
@@ -289,6 +333,7 @@ void main() {
     uint csrWriteIndex = INVALID_INDEX;
     uint csrWriteValue = 0u;
     bool machineTrap = false;
+    bool supervisorTrap = false;
     uint trapCause = 0u;
     uint trapValue = 0u;
     uint trapMstatus = 0u;
@@ -537,16 +582,28 @@ void main() {
         } else if (opcode == 0x73u) { // Environment and CSR operations
             if (funct3 == 0u) {
                 if (instruction == 0x00000073u) {
-                    machineTrap = true;
                     trapCause = currentPrivilege == PRIVILEGE_USER ? 8u
                         : currentPrivilege == PRIVILEGE_SUPERVISOR ? 9u : 11u;
                     uint mstatus = readCSR(CSR_MSTATUS);
-                    uint machineInterruptEnable = (mstatus >> 3u) & 1u;
-                    trapMstatus = (mstatus & ~0x1888u)
-                        | (machineInterruptEnable << 7u)
-                        | (currentPrivilege << 11u);
-                    nextPc = readCSR(CSR_MTVEC) & ~0x3u;
-                    nextPrivilege = PRIVILEGE_MACHINE;
+                    bool delegated = currentPrivilege != PRIVILEGE_MACHINE
+                        && ((readCSR(CSR_MEDELEG) >> trapCause) & 1u) != 0u;
+                    if (delegated) {
+                        supervisorTrap = true;
+                        uint supervisorInterruptEnable = (mstatus >> 1u) & 1u;
+                        trapMstatus = (mstatus & ~0x122u)
+                            | (supervisorInterruptEnable << 5u)
+                            | ((currentPrivilege & 1u) << 8u);
+                        nextPc = readCSR(CSR_STVEC) & ~0x3u;
+                        nextPrivilege = PRIVILEGE_SUPERVISOR;
+                    } else {
+                        machineTrap = true;
+                        uint machineInterruptEnable = (mstatus >> 3u) & 1u;
+                        trapMstatus = (mstatus & ~0x1888u)
+                            | (machineInterruptEnable << 7u)
+                            | (currentPrivilege << 11u);
+                        nextPc = readCSR(CSR_MTVEC) & ~0x3u;
+                        nextPrivilege = PRIVILEGE_MACHINE;
+                    }
                 } else if (instruction == 0x00100073u) {
                     nextPc = pc;
                     nextStatus = STATUS_EBREAK;
@@ -562,6 +619,18 @@ void main() {
                     csrWriteValue = (mstatus & ~0x1888u)
                         | (machinePreviousInterruptEnable << 3u)
                         | (1u << 7u);
+                } else if (instruction == 0x10200073u
+                        && currentPrivilege >= PRIVILEGE_SUPERVISOR) {
+                    uint mstatus = readCSR(CSR_MSTATUS);
+                    uint supervisorPreviousInterruptEnable = (mstatus >> 5u) & 1u;
+                    uint supervisorPreviousPrivilege = (mstatus >> 8u) & 1u;
+                    nextPc = readCSR(CSR_SEPC);
+                    nextPrivilege = supervisorPreviousPrivilege;
+                    writeCSR = true;
+                    csrWriteIndex = csrStateIndex(CSR_MSTATUS);
+                    csrWriteValue = (mstatus & ~0x122u)
+                        | (supervisorPreviousInterruptEnable << 1u)
+                        | (1u << 5u);
                 } else {
                     legal = false;
                 }
@@ -586,9 +655,13 @@ void main() {
                     if (wantsCSRWrite) {
                         writeCSR = true;
                         csrWriteIndex = csrStateIndex(csrAddress);
-                        csrWriteValue = replaceCSR ? csrOperand
+                        uint requestedCSRValue = replaceCSR ? csrOperand
                             : setCSRBits ? oldCSRValue | csrOperand
                             : oldCSRValue & ~csrOperand;
+                        uint writeMask = csrWriteMask(csrAddress);
+                        uint rawCSRValue = readStateWord(csrWriteIndex);
+                        csrWriteValue = (rawCSRValue & ~writeMask)
+                            | (requestedCSRValue & writeMask);
                     }
                 }
             }
@@ -634,6 +707,12 @@ void main() {
         if (outputIndex == csrStateIndex(CSR_MEPC)) outputWord = pc;
         if (outputIndex == csrStateIndex(CSR_MCAUSE)) outputWord = trapCause;
         if (outputIndex == csrStateIndex(CSR_MTVAL)) outputWord = trapValue;
+    }
+    if (supervisorTrap) {
+        if (outputIndex == csrStateIndex(CSR_MSTATUS)) outputWord = trapMstatus;
+        if (outputIndex == csrStateIndex(CSR_SEPC)) outputWord = pc;
+        if (outputIndex == csrStateIndex(CSR_SCAUSE)) outputWord = trapCause;
+        if (outputIndex == csrStateIndex(CSR_STVAL)) outputWord = trapValue;
     }
 
     if (writeMemory && outputIndex == (memoryAddress >> 2u)) {

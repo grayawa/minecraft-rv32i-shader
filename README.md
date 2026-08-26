@@ -1,6 +1,6 @@
 # Minecraft RV32IMA Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、机器态 CSR 和机器态 trap 返回路径。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S 特权级、同步 `ECALL` delegation 和 trap 返回路径。
 
 CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
@@ -10,7 +10,8 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - RV32M 的八条乘除法指令
 - RV32A 的十一条 32 位原子指令
 - Zicsr 的六种 CSR 读写指令
-- `ECALL` 机器态 trap entry 与 `MRET`
+- M-mode 与 S-mode CSR bank
+- `ECALL` 同步 trap entry、`medeleg` delegation、`MRET` 与 `SRET`
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
 - 65,264 字节小端 RAM
@@ -49,7 +50,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 ## 内置程序
 
-内置程序首先验证八条 RV32M 指令、机器 CSR、LR/SC reservation、`AMOADD.W`，然后通过 `mtvec` 执行一次 `ECALL` trap 并以 `MRET` 返回。验证成功后执行显存填充循环：
+内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。程序随后通过 `mtvec` 完成 M-mode `ECALL` 往返，使用 `MRET` 进入 S-mode，再将 S-mode `ECALL` 委托给 `stvec` 并通过 `SRET` 返回。验证成功后执行显存填充循环：
 
 ```asm
 lui   x1, 0x1
@@ -65,7 +66,7 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2364 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
+程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2386 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
 ## 指令范围
 
@@ -81,11 +82,11 @@ ebreak
 | Multiply/divide | `MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU` |
 | Atomic | `LR.W`, `SC.W`, `AMOSWAP.W`, `AMOADD.W`, `AMOXOR.W`, `AMOAND.W`, `AMOOR.W`, `AMOMIN.W`, `AMOMAX.W`, `AMOMINU.W`, `AMOMAXU.W` |
 | CSR | `CSRRW`, `CSRRS`, `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI` |
-| Environment | `FENCE`, `FENCE.I`, `ECALL`, `EBREAK`, `MRET` |
+| Environment | `FENCE`, `FENCE.I`, `ECALL`, `EBREAK`, `MRET`, `SRET` |
 
-CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip` 和 `satp`。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级与 LR/SC reservation。
+CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级与 LR/SC reservation。
 
-当前执行环境覆盖机器态裸机程序与同步 `ECALL` trap。S/U 特权级、delegation、其余同步异常 trap、Sv32 MMU、CLINT 和 UART 构成 Linux 启动路径的后续实现层。
+当前执行环境覆盖 M/S 特权级裸机程序、M-mode `ECALL` trap 和委托到 S-mode 的同步 `ECALL` trap。Linux 启动路径的下一层包括完整同步异常 trap、U-mode 验证、Sv32 MMU、CLINT 和 UART。
 
 ## 纹理机器布局
 
@@ -153,7 +154,7 @@ powershell -ExecutionPolicy Bypass -File tools/package.ps1
 
 ## 验证
 
-参考执行测试会重建内置机器码并执行整个程序：
+参考执行测试会重建内置机器码，并执行 RV32IMA、M/S CSR、delegation 与显存程序：
 
 ```powershell
 python tools/test_demo.py
@@ -162,14 +163,14 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA + machine trap demo OK: self-test passed, 576 framebuffer stores, 2364 instructions
+RV32IMA + M/S trap demo OK: self-test passed, 576 framebuffer stores, 2386 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。
 
 ## 设计依据
 
-[PiMaker/rvc](https://github.com/pimaker/rvc) 展示了以整数纹理承载 RISC-V 状态、让片元并行提交 CPU tick 的架构。本项目将其 RV32M 和 CSR 执行语义移植到 Minecraft persistent post-effect target，并为 RGBA8 状态、GLSL 330、Minecraft 仪表盘和资源包生命周期提供适配层。第三方说明见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
+[PiMaker/rvc](https://github.com/pimaker/rvc) 展示了以整数纹理承载 RISC-V 状态、让片元并行提交 CPU tick 的架构。本项目将其 RV32M、RV32A、CSR 与特权执行语义移植到 Minecraft persistent post-effect target，并为 RGBA8 状态、GLSL 330、Minecraft 仪表盘和资源包生命周期提供适配层。第三方说明见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
 
 指令行为依据 [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)。Minecraft 资源格式依据 [25w16a Post Effect 更新](https://www.minecraft.net/en-us/article/minecraft-snapshot-25w16a) 与 [26.3 Snapshot 3 `/posteffect`](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-3)。
 

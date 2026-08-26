@@ -1,4 +1,4 @@
-"""Reference execution test for the bundled RV32IMA and machine-trap self-test."""
+"""Reference execution test for the bundled RV32IMA M/S privilege self-test."""
 
 from __future__ import annotations
 
@@ -13,30 +13,40 @@ FRAMEBUFFER_ADDRESS = 0x1000
 FRAMEBUFFER_WORDS = 32 * 18
 CSR_MSCRATCH = 0x340
 CSR_MSTATUS = 0x300
+CSR_MEDELEG = 0x302
 CSR_MTVEC = 0x305
 CSR_MEPC = 0x341
 CSR_MCAUSE = 0x342
 CSR_MTVAL = 0x343
+CSR_STVEC = 0x105
+CSR_SEPC = 0x141
+CSR_SCAUSE = 0x142
+CSR_STVAL = 0x143
 
 EXPECTED_PROGRAM = [
     0x01500193, 0x00600213, 0x024182B3, 0x02419333,
     0x0241A3B3, 0x0241B433, 0x0241C4B3, 0x0241D533,
-    0x0241E5B3, 0x0241F633, 0x07E00693, 0x0CD29063,
-    0x0A031E63, 0x0A039C63, 0x0A041A63, 0x00300713,
-    0x0AE49663, 0x0AE51463, 0x0AE59263, 0x0AE61063,
-    0x340297F3, 0x34002873, 0x08079A63, 0x08581863,
+    0x0241E5B3, 0x0241F633, 0x07E00693, 0x10D29263,
+    0x10031063, 0x0E039E63, 0x0E041C63, 0x00300713,
+    0x0EE49863, 0x0EE51663, 0x0EE59463, 0x0EE61263,
+    0x340297F3, 0x34002873, 0x0C079C63, 0x0C581A63,
     0x20000893, 0x00700913, 0x0128A023, 0x1008A9AF,
     0x00900A13, 0x1948AAAF, 0x0008AB03, 0x00700B93,
-    0x07799663, 0x060A9463, 0x00900B93, 0x077B1063,
-    0x0128AC2F, 0x0008AC83, 0x057C1A63, 0x01000B93,
-    0x057C9663, 0x10000D13, 0x305D1073, 0x00000D93,
-    0x00000073, 0x00100E13, 0x03CD9A63, 0x34202EF3,
-    0x00B00F13, 0x03EE9463, 0x000010B7, 0x00100113,
-    0x00002337, 0x90030313, 0x0020A023, 0x00408093,
-    0x00110113, 0xFE60EAE3, 0x00100073, 0x000010B7,
-    0xDEADC137, 0xEEF10113, 0x0020A023, 0x00100073,
-    0x00100D93, 0x34102FF3, 0x004F8F93, 0x341F9073,
-    0x30200073,
+    0x0B799863, 0x0A0A9663, 0x00900B93, 0x0B7B1263,
+    0x0128AC2F, 0x0008AC83, 0x097C1C63, 0x01000B93,
+    0x097C9863, 0x14400D13, 0x305D1073, 0x00000D93,
+    0x00000073, 0x00100E13, 0x07CD9C63, 0x34202EF3,
+    0x00B00F13, 0x07EE9663, 0x15800D13, 0x105D1073,
+    0x20000D13, 0x302D1073, 0x0F000D13, 0x341D1073,
+    0x00001D37, 0x800D0D13, 0x300D1073, 0x30200073,
+    0x00000D93, 0x00000073, 0x00100E13, 0x03CD9A63,
+    0x14202EF3, 0x00900F13, 0x03EE9463, 0x000010B7,
+    0x00100113, 0x00002337, 0x90030313, 0x0020A023,
+    0x00408093, 0x00110113, 0xFE60EAE3, 0x00100073,
+    0x000010B7, 0xDEADC137, 0xEEF10113, 0x0020A023,
+    0x00100073, 0x00100D93, 0x34102FF3, 0x004F8F93,
+    0x341F9073, 0x30200073, 0x00100D93, 0x14102FF3,
+    0x004F8F93, 0x141F9073, 0x10200073,
 ]
 
 
@@ -143,16 +153,21 @@ def branch_immediate(instruction: int) -> int:
     return sign_extend(value, 13)
 
 
-def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], int, int, int]:
+def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], int, int, int, int]:
     registers = [0] * 32
     memory = bytearray(RAM_BYTES)
     csrs: dict[int, int] = {
         CSR_MSTATUS: 0,
+        CSR_MEDELEG: 0,
         CSR_MTVEC: 0,
         CSR_MSCRATCH: 0,
         CSR_MEPC: 0,
         CSR_MCAUSE: 0,
         CSR_MTVAL: 0,
+        CSR_STVEC: 0,
+        CSR_SEPC: 0,
+        CSR_SCAUSE: 0,
+        CSR_STVAL: 0,
     }
     privilege = 3
     reservation: int | None = None
@@ -220,17 +235,32 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
                 csrs[address] = operand if funct3 == 1 else old_value | operand
             registers[rd] = old_value
         elif instruction == 0x00000073:
-            machine_interrupt_enable = (csrs[CSR_MSTATUS] >> 3) & 1
-            csrs[CSR_MSTATUS] = (
-                (csrs[CSR_MSTATUS] & ~0x1888)
-                | (machine_interrupt_enable << 7)
-                | (privilege << 11)
-            )
-            csrs[CSR_MEPC] = pc
-            csrs[CSR_MCAUSE] = 8 if privilege == 0 else 9 if privilege == 1 else 11
-            csrs[CSR_MTVAL] = 0
-            privilege = 3
-            next_pc = csrs[CSR_MTVEC] & ~3
+            cause = 8 if privilege == 0 else 9 if privilege == 1 else 11
+            delegated = privilege != 3 and (csrs[CSR_MEDELEG] >> cause) & 1
+            if delegated:
+                supervisor_interrupt_enable = (csrs[CSR_MSTATUS] >> 1) & 1
+                csrs[CSR_MSTATUS] = (
+                    (csrs[CSR_MSTATUS] & ~0x122)
+                    | (supervisor_interrupt_enable << 5)
+                    | ((privilege & 1) << 8)
+                )
+                csrs[CSR_SEPC] = pc
+                csrs[CSR_SCAUSE] = cause
+                csrs[CSR_STVAL] = 0
+                privilege = 1
+                next_pc = csrs[CSR_STVEC] & ~3
+            else:
+                machine_interrupt_enable = (csrs[CSR_MSTATUS] >> 3) & 1
+                csrs[CSR_MSTATUS] = (
+                    (csrs[CSR_MSTATUS] & ~0x1888)
+                    | (machine_interrupt_enable << 7)
+                    | (privilege << 11)
+                )
+                csrs[CSR_MEPC] = pc
+                csrs[CSR_MCAUSE] = cause
+                csrs[CSR_MTVAL] = 0
+                privilege = 3
+                next_pc = csrs[CSR_MTVEC] & ~3
         elif instruction == 0x30200073 and privilege == 3:
             previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 7) & 1
             previous_privilege = (csrs[CSR_MSTATUS] >> 11) & 3
@@ -241,6 +271,16 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
             )
             privilege = previous_privilege
             next_pc = csrs[CSR_MEPC]
+        elif instruction == 0x10200073 and privilege >= 1:
+            previous_interrupt_enable = (csrs[CSR_MSTATUS] >> 5) & 1
+            previous_privilege = (csrs[CSR_MSTATUS] >> 8) & 1
+            csrs[CSR_MSTATUS] = (
+                (csrs[CSR_MSTATUS] & ~0x122)
+                | (previous_interrupt_enable << 1)
+                | (1 << 5)
+            )
+            privilege = previous_privilege
+            next_pc = csrs[CSR_SEPC]
         elif instruction == 0x00100073:
             next_pc = pc
             status = 1
@@ -251,7 +291,7 @@ def run_demo(program: list[int]) -> tuple[list[int], bytearray, dict[int, int], 
         pc = next_pc
         cycle += 1
 
-    return registers, memory, csrs, pc, cycle, status
+    return registers, memory, csrs, pc, cycle, status, privilege
 
 
 def main() -> None:
@@ -270,7 +310,7 @@ def main() -> None:
     assert program == EXPECTED_PROGRAM
     verify_high_multiply()
 
-    registers, memory, csrs, pc, cycle, status = run_demo(program)
+    registers, memory, csrs, pc, cycle, status, privilege = run_demo(program)
     values = [
         struct.unpack_from("<I", memory, FRAMEBUFFER_ADDRESS + index * 4)[0]
         for index in range(FRAMEBUFFER_WORDS)
@@ -286,17 +326,22 @@ def main() -> None:
     assert registers[24] == 9
     assert registers[25] == 16
     assert registers[27] == 1
-    assert registers[29] == 11
+    assert registers[29] == 9
     assert struct.unpack_from("<I", memory, 512)[0] == 16
     assert csrs[CSR_MSCRATCH] == 126
-    assert csrs[CSR_MTVEC] == 0x100
-    assert csrs[CSR_MEPC] == 0xB4
+    assert csrs[CSR_MTVEC] == 0x144
+    assert csrs[CSR_MEPC] == 0xF0
     assert csrs[CSR_MCAUSE] == 11
-    assert csrs[CSR_MSTATUS] == 0x80
-    assert pc == 0xE8
-    assert cycle == 2364
+    assert csrs[CSR_MEDELEG] == 0x200
+    assert csrs[CSR_STVEC] == 0x158
+    assert csrs[CSR_SEPC] == 0xF8
+    assert csrs[CSR_SCAUSE] == 9
+    assert csrs[CSR_MSTATUS] == 0xA0
+    assert privilege == 1
+    assert pc == 0x12C
+    assert cycle == 2386
     assert status == 1
-    print("RV32IMA + machine trap demo OK: self-test passed, 576 framebuffer stores, 2364 instructions")
+    print("RV32IMA + M/S trap demo OK: self-test passed, 576 framebuffer stores, 2386 instructions")
 
 
 if __name__ == "__main__":

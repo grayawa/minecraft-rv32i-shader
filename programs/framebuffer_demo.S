@@ -52,7 +52,7 @@ _start:
     bne   x25, x23, self_test_failed
 
     # Route an M-mode ECALL through mtvec and resume through MRET.
-    addi  x26, x0, 256
+    addi  x26, x0, 324
     csrrw x0, mtvec, x26
     addi  x27, x0, 0
     ecall
@@ -60,6 +60,27 @@ _start:
     bne   x27, x28, self_test_failed
     csrrs x29, mcause, x0
     addi  x30, x0, 11
+    bne   x29, x30, self_test_failed
+
+    # Delegate a supervisor ECALL, enter S-mode through MRET, and return with SRET.
+    addi  x26, x0, 344
+    csrrw x0, stvec, x26
+    addi  x26, x0, 512
+    csrrw x0, medeleg, x26
+    addi  x26, x0, supervisor_test
+    csrrw x0, mepc, x26
+    lui   x26, 0x1
+    addi  x26, x26, -2048
+    csrrw x0, mstatus, x26
+    mret
+
+supervisor_test:
+    addi  x27, x0, 0
+    ecall
+    addi  x28, x0, 1
+    bne   x27, x28, self_test_failed
+    csrrs x29, scause, x0
+    addi  x30, x0, 9
     bne   x29, x30, self_test_failed
 
     # x1 traverses the framebuffer from 0x1000 to 0x18ff.
@@ -82,10 +103,18 @@ self_test_failed:
     sw    x2, 0(x1)
     ebreak
 
-    .org 256
+    .org 324
 machine_trap_handler:
     addi  x27, x0, 1
     csrrs x31, mepc, x0
     addi  x31, x31, 4
     csrrw x0, mepc, x31
     mret
+
+    .org 344
+supervisor_trap_handler:
+    addi  x27, x0, 1
+    csrrs x31, sepc, x0
+    addi  x31, x31, 4
+    csrrw x0, sepc, x31
+    sret
