@@ -8,12 +8,41 @@ $outputDirectory = Split-Path -Parent $outputPath
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 
 $inputs = @(
-    (Join-Path $projectRoot "pack.mcmeta"),
-    (Join-Path $projectRoot "README.md"),
-    (Join-Path $projectRoot "LICENSE.txt"),
-    (Join-Path $projectRoot "THIRD_PARTY.md"),
-    (Join-Path $projectRoot "assets")
+    "pack.mcmeta",
+    "README.md",
+    "LICENSE.txt",
+    "THIRD_PARTY.md"
 )
 
-Compress-Archive -LiteralPath $inputs -DestinationPath $outputPath -CompressionLevel Optimal -Force
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$files = foreach ($relativePath in $inputs) {
+    Get-Item -LiteralPath (Join-Path $projectRoot $relativePath)
+}
+$files += Get-ChildItem -LiteralPath (Join-Path $projectRoot "assets") -File -Recurse
+
+if (Test-Path -LiteralPath $outputPath) {
+    Remove-Item -LiteralPath $outputPath -Force
+}
+
+$archive = [System.IO.Compression.ZipFile]::Open(
+    $outputPath,
+    [System.IO.Compression.ZipArchiveMode]::Create
+)
+try {
+    foreach ($file in $files) {
+        $entryName = [System.IO.Path]::GetRelativePath($projectRoot, $file.FullName).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $archive,
+            $file.FullName,
+            $entryName,
+            [System.IO.Compression.CompressionLevel]::Optimal
+        ) | Out-Null
+    }
+}
+finally {
+    $archive.Dispose()
+}
+
 Write-Output $outputPath
