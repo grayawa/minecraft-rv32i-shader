@@ -14,14 +14,34 @@ layout(location = 0) out vec4 fragColor;
 
 const uint TEXTURE_WIDTH = 128u;
 const uint TEXTURE_WORDS = 16384u;
+const uint CSR_BASE = 16316u;
 const uint REGISTER_BASE = 16348u;
 const uint STATUS_INDEX = 16380u;
 const uint CYCLE_INDEX = 16381u;
 const uint PC_INDEX = 16382u;
 const uint MAGIC_INDEX = 16383u;
 const uint MAGIC_VALUE = 0x52563332u;
-const uint RAM_WORDS = REGISTER_BASE;
+const uint RAM_WORDS = CSR_BASE;
 const uint RAM_BYTES = RAM_WORDS * 4u;
+const uint INVALID_INDEX = 0xffffffffu;
+
+const uint CSR_MSTATUS = 0x300u;
+const uint CSR_MISA = 0x301u;
+const uint CSR_MEDELEG = 0x302u;
+const uint CSR_MIDELEG = 0x303u;
+const uint CSR_MIE = 0x304u;
+const uint CSR_MTVEC = 0x305u;
+const uint CSR_MSCRATCH = 0x340u;
+const uint CSR_MEPC = 0x341u;
+const uint CSR_MCAUSE = 0x342u;
+const uint CSR_MTVAL = 0x343u;
+const uint CSR_MIP = 0x344u;
+const uint CSR_SATP = 0x180u;
+const uint CSR_MCYCLE = 0xb00u;
+const uint CSR_MINSTRET = 0xb02u;
+const uint CSR_CYCLE = 0xc00u;
+const uint CSR_INSTRET = 0xc02u;
+const uint CSR_MHARTID = 0xf14u;
 
 const uint STATUS_RUNNING = 0u;
 const uint STATUS_EBREAK = 1u;
@@ -71,18 +91,110 @@ uint signExtend(uint value, uint bits) {
     return uint(int(value << shift) >> int(shift));
 }
 
+uint multiplyHighUnsigned(uint left, uint right) {
+    uint leftLow = left & 0xffffu;
+    uint leftHigh = left >> 16u;
+    uint rightLow = right & 0xffffu;
+    uint rightHigh = right >> 16u;
+    uint lowProduct = leftLow * rightLow;
+    uint middle = leftHigh * rightLow + (lowProduct >> 16u);
+    uint carryProduct = leftLow * rightHigh + (middle & 0xffffu);
+    return leftHigh * rightHigh + (middle >> 16u) + (carryProduct >> 16u);
+}
+
+uint multiplyHighSignedUnsigned(uint left, uint right) {
+    uint highWord = multiplyHighUnsigned(left, right);
+    return (left & 0x80000000u) != 0u ? highWord - right : highWord;
+}
+
+uint multiplyHighSigned(uint left, uint right) {
+    uint highWord = multiplyHighUnsigned(left, right);
+    if ((left & 0x80000000u) != 0u) highWord -= right;
+    if ((right & 0x80000000u) != 0u) highWord -= left;
+    return highWord;
+}
+
+uint csrStateIndex(uint address) {
+    if (address == CSR_MSTATUS) return CSR_BASE + 0u;
+    if (address == CSR_MEDELEG) return CSR_BASE + 1u;
+    if (address == CSR_MIDELEG) return CSR_BASE + 2u;
+    if (address == CSR_MIE) return CSR_BASE + 3u;
+    if (address == CSR_MTVEC) return CSR_BASE + 4u;
+    if (address == CSR_MSCRATCH) return CSR_BASE + 5u;
+    if (address == CSR_MEPC) return CSR_BASE + 6u;
+    if (address == CSR_MCAUSE) return CSR_BASE + 7u;
+    if (address == CSR_MTVAL) return CSR_BASE + 8u;
+    if (address == CSR_MIP) return CSR_BASE + 9u;
+    if (address == CSR_SATP) return CSR_BASE + 10u;
+    return INVALID_INDEX;
+}
+
+bool csrSupported(uint address) {
+    return csrStateIndex(address) != INVALID_INDEX
+        || address == CSR_MISA
+        || address == CSR_MCYCLE
+        || address == CSR_MINSTRET
+        || address == CSR_CYCLE
+        || address == CSR_INSTRET
+        || address == CSR_MHARTID;
+}
+
+bool csrWritable(uint address) {
+    return csrStateIndex(address) != INVALID_INDEX;
+}
+
+uint readCSR(uint address) {
+    if (address == CSR_MISA) return 0x40001100u; // RV32IM
+    if (address == CSR_MCYCLE || address == CSR_MINSTRET
+            || address == CSR_CYCLE || address == CSR_INSTRET) {
+        return readStateWord(CYCLE_INDEX);
+    }
+    if (address == CSR_MHARTID) return 0u;
+    uint index = csrStateIndex(address);
+    return index == INVALID_INDEX ? 0u : readStateWord(index);
+}
+
 uint initialProgramWord(uint index) {
-    // The bundled RV32I program fills the 32x18 framebuffer with values 1..576.
-    // Its final EBREAK leaves the completed image and CPU state on the dashboard.
-    if (index == 0u) return 0x000010b7u; // lui   x1, 0x1
-    if (index == 1u) return 0x00100113u; // addi  x2, x0, 1
-    if (index == 2u) return 0x00002337u; // lui   x6, 0x2
-    if (index == 3u) return 0x90030313u; // addi  x6, x6, -1792
-    if (index == 4u) return 0x0020a023u; // sw    x2, 0(x1)
-    if (index == 5u) return 0x00408093u; // addi  x1, x1, 4
-    if (index == 6u) return 0x00110113u; // addi  x2, x2, 1
-    if (index == 7u) return 0xfe60eae3u; // bltu  x1, x6, -12
-    if (index == 8u) return 0x00100073u; // ebreak
+    // The bundled program validates RV32M and machine CSR access before filling
+    // the 32x18 framebuffer. A failed check writes 0xDEADBEEF to its first cell.
+    if (index == 0u) return 0x01500193u;
+    if (index == 1u) return 0x00600213u;
+    if (index == 2u) return 0x024182b3u;
+    if (index == 3u) return 0x02419333u;
+    if (index == 4u) return 0x0241a3b3u;
+    if (index == 5u) return 0x0241b433u;
+    if (index == 6u) return 0x0241c4b3u;
+    if (index == 7u) return 0x0241d533u;
+    if (index == 8u) return 0x0241e5b3u;
+    if (index == 9u) return 0x0241f633u;
+    if (index == 10u) return 0x07e00693u;
+    if (index == 11u) return 0x04d29c63u;
+    if (index == 12u) return 0x04031a63u;
+    if (index == 13u) return 0x04039863u;
+    if (index == 14u) return 0x04041663u;
+    if (index == 15u) return 0x00300713u;
+    if (index == 16u) return 0x04e49263u;
+    if (index == 17u) return 0x04e51063u;
+    if (index == 18u) return 0x02e59e63u;
+    if (index == 19u) return 0x02e61c63u;
+    if (index == 20u) return 0x340297f3u;
+    if (index == 21u) return 0x34002873u;
+    if (index == 22u) return 0x02079663u;
+    if (index == 23u) return 0x02581463u;
+    if (index == 24u) return 0x000010b7u;
+    if (index == 25u) return 0x00100113u;
+    if (index == 26u) return 0x00002337u;
+    if (index == 27u) return 0x90030313u;
+    if (index == 28u) return 0x0020a023u;
+    if (index == 29u) return 0x00408093u;
+    if (index == 30u) return 0x00110113u;
+    if (index == 31u) return 0xfe60eae3u;
+    if (index == 32u) return 0x00100073u;
+    if (index == 33u) return 0x000010b7u;
+    if (index == 34u) return 0xdeadc137u;
+    if (index == 35u) return 0xeef10113u;
+    if (index == 36u) return 0x0020a023u;
+    if (index == 37u) return 0x00100073u;
     return 0u;
 }
 
@@ -91,6 +203,7 @@ uint initialWord(uint index) {
     if (index == PC_INDEX) return 0u;
     if (index == CYCLE_INDEX) return 0u;
     if (index == STATUS_INDEX) return STATUS_RUNNING;
+    if (index >= CSR_BASE && index < REGISTER_BASE) return 0u;
     if (index >= REGISTER_BASE && index < REGISTER_BASE + 32u) return 0u;
     return initialProgramWord(index);
 }
@@ -124,6 +237,9 @@ void main() {
     uint memoryAddress = 0u;
     uint memoryWidth = 0u;
     uint memoryValue = 0u;
+    bool writeCSR = false;
+    uint csrWriteIndex = INVALID_INDEX;
+    uint csrWriteValue = 0u;
 
     bool fetchValid = pc < RAM_BYTES && (pc & 3u) == 0u;
     uint instruction = fetchValid ? readMemoryWord(pc) : 0u;
@@ -279,7 +395,25 @@ void main() {
             writeRegister = true;
             destinationRegister = rd;
             uint shiftAmount = source2 & 0x1fu;
-            if (funct3 == 0u && funct7 == 0u) registerValue = source1 + source2;
+            if (funct7 == 0x01u) { // RV32M
+                if (funct3 == 0u) registerValue = source1 * source2;
+                else if (funct3 == 1u) registerValue = multiplyHighSigned(source1, source2);
+                else if (funct3 == 2u) registerValue = multiplyHighSignedUnsigned(source1, source2);
+                else if (funct3 == 3u) registerValue = multiplyHighUnsigned(source1, source2);
+                else if (funct3 == 4u) {
+                    if (source2 == 0u) registerValue = 0xffffffffu;
+                    else if (source1 == 0x80000000u && source2 == 0xffffffffu) registerValue = source1;
+                    else registerValue = uint(int(source1) / int(source2));
+                } else if (funct3 == 5u) {
+                    registerValue = source2 == 0u ? 0xffffffffu : source1 / source2;
+                } else if (funct3 == 6u) {
+                    if (source2 == 0u) registerValue = source1;
+                    else if (source1 == 0x80000000u && source2 == 0xffffffffu) registerValue = 0u;
+                    else registerValue = uint(int(source1) % int(source2));
+                } else if (funct3 == 7u) {
+                    registerValue = source2 == 0u ? source1 : source1 % source2;
+                } else legal = false;
+            } else if (funct3 == 0u && funct7 == 0u) registerValue = source1 + source2;
             else if (funct3 == 0u && funct7 == 0x20u) registerValue = source1 - source2;
             else if (funct3 == 1u && funct7 == 0u) registerValue = source1 << shiftAmount;
             else if (funct3 == 2u && funct7 == 0u) registerValue = int(source1) < int(source2) ? 1u : 0u;
@@ -290,17 +424,44 @@ void main() {
             else if (funct3 == 6u && funct7 == 0u) registerValue = source1 | source2;
             else if (funct3 == 7u && funct7 == 0u) registerValue = source1 & source2;
             else legal = false;
-        } else if (opcode == 0x0fu) { // FENCE
-            legal = funct3 == 0u;
-        } else if (opcode == 0x73u) { // ECALL and EBREAK
-            if (instruction == 0x00000073u) {
-                nextPc = pc;
-                nextStatus = STATUS_ECALL;
-            } else if (instruction == 0x00100073u) {
-                nextPc = pc;
-                nextStatus = STATUS_EBREAK;
+        } else if (opcode == 0x0fu) { // FENCE and FENCE.I
+            legal = funct3 == 0u || funct3 == 1u;
+        } else if (opcode == 0x73u) { // Environment and CSR operations
+            if (funct3 == 0u) {
+                if (instruction == 0x00000073u) {
+                    nextPc = pc;
+                    nextStatus = STATUS_ECALL;
+                } else if (instruction == 0x00100073u) {
+                    nextPc = pc;
+                    nextStatus = STATUS_EBREAK;
+                } else {
+                    legal = false;
+                }
             } else {
-                legal = false;
+                uint csrAddress = instruction >> 20u;
+                bool immediateCSR = funct3 >= 5u;
+                uint csrOperand = immediateCSR ? rs1 : source1;
+                uint oldCSRValue = readCSR(csrAddress);
+                bool replaceCSR = funct3 == 1u || funct3 == 5u;
+                bool setCSRBits = funct3 == 2u || funct3 == 6u;
+                bool clearCSRBits = funct3 == 3u || funct3 == 7u;
+                bool wantsCSRWrite = replaceCSR || ((setCSRBits || clearCSRBits) && csrOperand != 0u);
+
+                if (!csrSupported(csrAddress) || (!replaceCSR && !setCSRBits && !clearCSRBits)
+                        || (wantsCSRWrite && !csrWritable(csrAddress))) {
+                    legal = false;
+                } else {
+                    writeRegister = true;
+                    destinationRegister = rd;
+                    registerValue = oldCSRValue;
+                    if (wantsCSRWrite) {
+                        writeCSR = true;
+                        csrWriteIndex = csrStateIndex(csrAddress);
+                        csrWriteValue = replaceCSR ? csrOperand
+                            : setCSRBits ? oldCSRValue | csrOperand
+                            : oldCSRValue & ~csrOperand;
+                    }
+                }
             }
         } else {
             legal = false;
@@ -311,6 +472,7 @@ void main() {
             nextStatus = STATUS_ILLEGAL_INSTRUCTION;
             writeRegister = false;
             writeMemory = false;
+            writeCSR = false;
         }
     }
 
@@ -325,6 +487,10 @@ void main() {
     }
     if (outputIndex == REGISTER_BASE) {
         outputWord = 0u;
+    }
+
+    if (writeCSR && outputIndex == csrWriteIndex) {
+        outputWord = csrWriteValue;
     }
 
     if (writeMemory && outputIndex == (memoryAddress >> 2u)) {

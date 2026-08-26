@@ -1,21 +1,23 @@
-# Minecraft RV32I Shader
+# Minecraft RV32IM Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IM、Zicsr 和面向机器态软件的 CSR bank。
 
-CPU、寄存器、PC、RAM、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RV32I 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
+CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
 ## 特性
 
 - RV32I Base Integer Instruction Set 2.1 的 40 条基础指令
+- RV32M 的八条乘除法指令
+- Zicsr 的六种 CSR 读写指令
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
-- 65,392 字节小端 RAM
+- 65,264 字节小端 RAM
 - 8 位、16 位和 32 位 load/store
 - 自然对齐访问与可视化异常状态
 - 32 × 18 单词显存，基地址为 `0x00001000`
 - 约 120 指令/秒的 60 FPS 默认执行速度
 - PC、周期、状态、`x1`–`x8`、显存与 RAM 活动仪表盘
-- 内置 RV32I 显存填充程序
+- 内置 RV32IM/Zicsr 自检与显存填充程序
 - 平面 RV32 binary 到 GLSL ROM 的转换工具
 - 原版资源包运行方式
 
@@ -27,7 +29,7 @@ CPU、寄存器、PC、RAM、显存和执行状态全部保存在两个 128 × 1
 
 1. 下载 [`MinecraftRV32IShader-26.3-snapshot-5.zip`](dist/MinecraftRV32IShader-26.3-snapshot-5.zip)。
 2. 将 ZIP 放入当前 Minecraft 实例的 `resourcepacks` 目录。
-3. 在“选项 → 资源包”中启用 **Minecraft RV32I**。
+3. 在“选项 → 资源包”中启用 **Minecraft RV32IM**。
 4. 进入具有命令权限的世界。
 5. 执行：
 
@@ -45,7 +47,7 @@ CPU、寄存器、PC、RAM、显存和执行状态全部保存在两个 128 × 1
 
 ## 内置程序
 
-[`programs/framebuffer_demo.S`](programs/framebuffer_demo.S) 使用九个 RV32I 指令单词循环写入显存：
+内置程序首先验证八条 RV32M 指令，并通过 `mscratch` 验证 `CSRRW` 和 `CSRRS`。验证成功后执行显存填充循环：
 
 ```asm
 lui   x1, 0x1
@@ -61,9 +63,9 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2309 条指令。
+程序向 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2333 条指令。验证失败路径将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
-## RV32I 指令范围
+## 指令范围
 
 | 类别 | 指令 |
 | --- | --- |
@@ -74,11 +76,13 @@ ebreak
 | Store | `SB`, `SH`, `SW` |
 | Immediate ALU | `ADDI`, `SLTI`, `SLTIU`, `XORI`, `ORI`, `ANDI`, `SLLI`, `SRLI`, `SRAI` |
 | Register ALU | `ADD`, `SUB`, `SLL`, `SLT`, `SLTU`, `XOR`, `SRL`, `SRA`, `OR`, `AND` |
-| Environment | `FENCE`, `ECALL`, `EBREAK` |
+| Multiply/divide | `MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU` |
+| CSR | `CSRRW`, `CSRRS`, `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI` |
+| Environment | `FENCE`, `FENCE.I`, `ECALL`, `EBREAK` |
 
-`FENCE` 在单一顺序内存环境中完成一次顺序同步。`ECALL` 与 `EBREAK` 将相应状态写入 CPU 元数据并保持仪表盘内容。
+CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip` 和 `satp`。`misa` 返回 RV32IM 能力位，周期计数器和 hart ID 通过对应 CSR 读取。
 
-当前执行环境聚焦 RV32I 用户态整数程序。CSR、特权架构以及 M/A/F/D/C 扩展适合作为后续实现层。
+当前执行环境聚焦机器态裸机程序。特权级切换、trap、Sv32 MMU、RV32A、CLINT 和 UART 构成 Linux 启动路径的后续实现层。
 
 ## 纹理机器布局
 
@@ -95,7 +99,8 @@ A = bits 31..24
 
 | 单词索引 | 内容 |
 | --- | --- |
-| `0`–`16347` | RAM，字节地址 `0x00000000`–`0x0000ff6f` |
+| `0`–`16315` | RAM，字节地址 `0x00000000`–`0x0000feef` |
+| `16316`–`16347` | 机器态 CSR bank |
 | `16348`–`16379` | `x0`–`x31` |
 | `16380` | CPU 状态 |
 | `16381` | 周期计数器 |
@@ -105,7 +110,7 @@ A = bits 31..24
 双缓冲执行流程：
 
 ```text
-state_a → RV32I tick → state_b → RV32I tick → state_a → dashboard
+state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 ```
 
 每个片元读取同一条指令、源寄存器与相关内存。输出坐标决定该片元负责 RAM 单词、目标寄存器或 CPU 元数据。这个结构将一次指令提交表达为整张纹理的并行状态转换。
@@ -127,7 +132,7 @@ state_a → RV32I tick → state_b → RV32I tick → state_a → dashboard
 
 ## 加载自己的程序
 
-模拟器从字节地址零开始执行平面 RV32 binary。链接脚本可以将 `.text` 放置在 `0x00000000`，并将 RAM 范围控制在 `0x0000ff70` 以内。
+模拟器从字节地址零开始执行平面 RV32 binary。链接脚本可以将 `.text` 放置在 `0x00000000`，并将 RAM 范围控制在 `0x00000000`–`0x0000feef`。
 
 转换 binary：
 
@@ -154,16 +159,16 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32I demo OK: 576 framebuffer stores, 2309 instructions, EBREAK
+RV32IM + Zicsr demo OK: self-test passed, 576 framebuffer stores, 2333 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。
 
 ## 设计依据
 
-[PiMaker/rvc](https://github.com/pimaker/rvc) 展示了以整数纹理承载 RISC-V 状态、让片元并行提交 CPU tick 的架构。本项目将这套思路映射到 Minecraft persistent post-effect target，并为 RGBA8 状态、RV32I 用户态执行环境、Minecraft 仪表盘和资源包生命周期设计了独立实现。第三方说明见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
+[PiMaker/rvc](https://github.com/pimaker/rvc) 展示了以整数纹理承载 RISC-V 状态、让片元并行提交 CPU tick 的架构。本项目将其 RV32M 和 CSR 执行语义移植到 Minecraft persistent post-effect target，并为 RGBA8 状态、GLSL 330、Minecraft 仪表盘和资源包生命周期提供适配层。第三方说明见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
 
-指令行为依据 [RISC-V RV32I Base Integer Instruction Set, Version 2.1](https://docs.riscv.org/reference/isa/v20240411/unpriv/rv32.html)。Minecraft 资源格式依据 [25w16a Post Effect 更新](https://www.minecraft.net/en-us/article/minecraft-snapshot-25w16a) 与 [26.3 Snapshot 3 `/posteffect`](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-3)。
+指令行为依据 [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)。Minecraft 资源格式依据 [25w16a Post Effect 更新](https://www.minecraft.net/en-us/article/minecraft-snapshot-25w16a) 与 [26.3 Snapshot 3 `/posteffect`](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-3)。
 
 ## 许可证
 

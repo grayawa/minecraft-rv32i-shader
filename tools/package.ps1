@@ -11,7 +11,8 @@ $inputs = @(
     "pack.mcmeta",
     "README.md",
     "LICENSE.txt",
-    "THIRD_PARTY.md"
+    "THIRD_PARTY.md",
+    "third_party/rvc/LICENSE"
 )
 
 Add-Type -AssemblyName System.IO.Compression
