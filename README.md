@@ -4,6 +4,8 @@
 
 当前资源包面向 **Minecraft Java Edition 26.3-snapshot-5**，资源包格式为 93.0。
 
+> **This is EXTREMELY SLOW, so be patient.**
+
 ## 快速开始
 
 1. 下载 [`MinecraftRV32IShader-26.3-snapshot-5.zip`](dist/MinecraftRV32IShader-26.3-snapshot-5.zip)。
