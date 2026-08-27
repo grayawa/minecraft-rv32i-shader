@@ -5,25 +5,45 @@
       "width": 128,
       "height": 128,
       "persistent": true,
-      "clear_color": [0.0, 0.0, 0.0, 0.0]
+      "clear_color": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
     },
     "state_b": {
       "width": 128,
       "height": 128,
       "persistent": true,
-      "clear_color": [0.0, 0.0, 0.0, 0.0]
+      "clear_color": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
     },
     "ram_a": {
-      "width": 1024,
-      "height": 256,
+      "width": 4096,
+      "height": 768,
       "persistent": true,
-      "clear_color": [0.0, 0.0, 0.0, 0.0]
+      "clear_color": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
     },
     "ram_b": {
-      "width": 1024,
-      "height": 256,
+      "width": 4096,
+      "height": 768,
       "persistent": true,
-      "clear_color": [0.0, 0.0, 0.0, 0.0]
+      "clear_color": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
     }
   },
   "passes": [
@@ -41,7 +61,12 @@
           {
             "name": "ColorModulate",
             "type": "vec4",
-            "value": [1.0, 1.0, 1.0, 1.0]
+            "value": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
           }
         ]
       },
@@ -62,14 +87,20 @@
         {
           "sampler_name": "GuestImage",
           "location": "mcrv:guest_demo",
-          "width": 1024,
-          "height": 256
+          "width": 2048,
+          "height": 1024
         },
         {
           "sampler_name": "DtbImage",
           "location": "mcrv:dtb_mcrv",
           "width": 1024,
           "height": 1
+        },
+        {
+          "sampler_name": "MtdImage",
+          "location": "mcrv:mtd_empty",
+          "width": 4096,
+          "height": 3447
         }
       ],
       "output": "state_b"
@@ -89,11 +120,28 @@
         {
           "sampler_name": "GuestImage",
           "location": "mcrv:guest_demo",
-          "width": 1024,
-          "height": 256
+          "width": 2048,
+          "height": 1024
+        },
+        {
+          "sampler_name": "MtdImage",
+          "location": "mcrv:mtd_empty",
+          "width": 4096,
+          "height": 3447
         }
       ],
       "output": "ram_b"
+    },
+    {
+      "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "mcrv:post/rv32_cache_clear",
+      "inputs": [
+        {
+          "sampler_name": "State",
+          "target": "state_b"
+        }
+      ],
+      "output": "state_a"
     },
     {
       "vertex_shader": "minecraft:core/screenquad",
@@ -101,7 +149,7 @@
       "inputs": [
         {
           "sampler_name": "State",
-          "target": "state_b"
+          "target": "state_a"
         },
         {
           "sampler_name": "Ram",
@@ -110,17 +158,23 @@
         {
           "sampler_name": "GuestImage",
           "location": "mcrv:guest_demo",
-          "width": 1024,
-          "height": 256
+          "width": 2048,
+          "height": 1024
         },
         {
           "sampler_name": "DtbImage",
           "location": "mcrv:dtb_mcrv",
           "width": 1024,
           "height": 1
+        },
+        {
+          "sampler_name": "MtdImage",
+          "location": "mcrv:mtd_empty",
+          "width": 4096,
+          "height": 3447
         }
       ],
-      "output": "state_a"
+      "output": "state_b"
     },
     {
       "vertex_shader": "minecraft:core/screenquad",
@@ -132,16 +186,33 @@
         },
         {
           "sampler_name": "State",
-          "target": "state_a"
+          "target": "state_b"
         },
         {
           "sampler_name": "GuestImage",
           "location": "mcrv:guest_demo",
-          "width": 1024,
-          "height": 256
+          "width": 2048,
+          "height": 1024
+        },
+        {
+          "sampler_name": "MtdImage",
+          "location": "mcrv:mtd_empty",
+          "width": 4096,
+          "height": 3447
         }
       ],
       "output": "ram_a"
+    },
+    {
+      "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "mcrv:post/rv32_cache_clear",
+      "inputs": [
+        {
+          "sampler_name": "State",
+          "target": "state_b"
+        }
+      ],
+      "output": "state_a"
     },
     {
       "vertex_shader": "minecraft:core/screenquad",

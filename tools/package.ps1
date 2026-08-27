@@ -13,7 +13,9 @@ $inputs = @(
     "README.md",
     "LICENSE.txt",
     "THIRD_PARTY.md",
-    "third_party/rvc/LICENSE"
+    "third_party/rvc/LICENSE",
+    "third_party/opensbi/COPYING.BSD",
+    "third_party/linux/COPYING"
 )
 
 Add-Type -AssemblyName System.IO.Compression

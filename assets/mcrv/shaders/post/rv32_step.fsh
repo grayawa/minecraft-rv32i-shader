@@ -5,6 +5,7 @@ uniform sampler2D StateSampler;
 uniform sampler2D RamSampler;
 uniform sampler2D GuestImageSampler;
 uniform sampler2D DtbImageSampler;
+uniform sampler2D MtdImageSampler;
 
 layout(location = 0) in vec2 texCoord;
 
@@ -14,15 +15,22 @@ layout(std140) uniform SamplerInfo {
     vec2 RamSize;
     vec2 GuestImageSize;
     vec2 DtbImageSize;
+    vec2 MtdImageSize;
 };
 
 layout(location = 0) out vec4 fragColor;
 
 const uint STATE_TEXTURE_WIDTH = 128u;
 const uint STATE_TEXTURE_WORDS = 16384u;
-const uint RAM_TEXTURE_WIDTH = 1024u;
-const uint RAM_TEXTURE_WORDS = 262144u;
+const uint RAM_TEXTURE_WIDTH = 4096u;
+const uint RAM_TEXTURE_WORDS = 3145728u;
 const uint RAM_MAGIC_INDEX = RAM_TEXTURE_WORDS - 1u;
+const uint RAM_MAGIC_VALUE = 0x52414d31u;
+const uint RAM_WORDS = RAM_TEXTURE_WORDS - 1024u;
+const uint GUEST_TEXTURE_WIDTH = 2048u;
+const uint GUEST_TEXTURE_WORDS = 2097152u;
+const uint MTD_TEXTURE_WIDTH = 4096u;
+const uint MTD_TEXTURE_WORDS = 14118912u;
 const uint DEVICE_BASE = 16300u;
 const uint CSR_BASE = 16316u;
 const uint REGISTER_BASE = 16348u;
@@ -31,14 +39,17 @@ const uint CYCLE_INDEX = 16381u;
 const uint PC_INDEX = 16382u;
 const uint MAGIC_INDEX = 16383u;
 const uint MAGIC_VALUE = 0x52563332u;
-const uint GUEST_DTB_INDEX = RAM_TEXTURE_WORDS - 4u;
-const uint GUEST_ENTRY_INDEX = RAM_TEXTURE_WORDS - 3u;
-const uint GUEST_LOAD_INDEX = RAM_TEXTURE_WORDS - 2u;
-const uint GUEST_MAGIC_INDEX = RAM_TEXTURE_WORDS - 1u;
+const uint GUEST_DTB_INDEX = GUEST_TEXTURE_WORDS - 4u;
+const uint GUEST_ENTRY_INDEX = GUEST_TEXTURE_WORDS - 3u;
+const uint GUEST_LOAD_INDEX = GUEST_TEXTURE_WORDS - 2u;
+const uint GUEST_MAGIC_INDEX = GUEST_TEXTURE_WORDS - 1u;
 const uint GUEST_MAGIC_VALUE = 0x4d435256u;
-const uint RAM_WORDS = RAM_MAGIC_INDEX;
 const uint RAM_BYTES = RAM_WORDS * 4u;
 const uint DTB_BYTES = 4096u;
+const uint MTD_BASE_ADDRESS = 0x40000000u;
+const uint MTD_BYTES = MTD_TEXTURE_WORDS * 4u;
+const uint RTC_BASE_ADDRESS = 0x030007f8u;
+const uint RTC_REGISTER_BYTES = 8u;
 const uint INVALID_INDEX = 0xffffffffu;
 
 const uint CLINT_MSIP_ADDRESS = 0x02000000u;
@@ -48,8 +59,8 @@ const uint CLINT_MTIME_LOW_ADDRESS = 0x0200bff8u;
 const uint CLINT_MTIME_HIGH_ADDRESS = 0x0200bffcu;
 const uint UART_BASE_ADDRESS = 0x10000000u;
 const uint UART_REGISTER_BYTES = 8u;
-const uint UART_TX_BUFFER_ADDRESS = 0x00001900u;
-const uint UART_TX_BUFFER_BYTES = 64u;
+const uint UART_TX_BUFFER_OFFSET = RAM_BYTES;
+const uint UART_TX_BUFFER_BYTES = 256u;
 const uint PLIC_PRIORITY_ADDRESS = 0x0c000028u;
 const uint PLIC_PENDING_ADDRESS = 0x0c001000u;
 const uint PLIC_ENABLE_ADDRESS = 0x0c002000u;
@@ -85,6 +96,12 @@ const uint CSR_SEPC = 0x141u;
 const uint CSR_SCAUSE = 0x142u;
 const uint CSR_STVAL = 0x143u;
 const uint CSR_SIP = 0x144u;
+const uint CSR_TIME = 0xc01u;
+const uint CSR_TIMEH = 0xc81u;
+const uint CSR_MEMOP_OP = 0x0b0u;
+const uint CSR_MEMOP_SRC = 0x0b1u;
+const uint CSR_MEMOP_DST = 0x0b2u;
+const uint CSR_MEMOP_N = 0x0b3u;
 const uint CLINT_MSIP_INDEX = DEVICE_BASE + 0u;
 const uint CLINT_MTIMECMP_LOW_INDEX = DEVICE_BASE + 1u;
 const uint CLINT_MTIMECMP_HIGH_INDEX = DEVICE_BASE + 2u;
@@ -104,10 +121,19 @@ const uint PLIC_SUPERVISOR_CLAIMED_INDEX = DEVICE_BASE + 15u;
 const uint PRIVILEGE_INDEX = CSR_BASE + 28u;
 const uint RESERVATION_ADDRESS_INDEX = CSR_BASE + 29u;
 const uint RESERVATION_VALID_INDEX = CSR_BASE + 30u;
-const uint RAM_WRITE_VALID_INDEX = CSR_BASE + 16u;
-const uint RAM_WRITE_ADDRESS_INDEX = CSR_BASE + 17u;
-const uint RAM_WRITE_VALUE_INDEX = CSR_BASE + 18u;
-const uint RAM_WRITE_WIDTH_INDEX = CSR_BASE + 19u;
+const uint CACHE_TAG_BASE = 4096u;
+const uint CACHE_VALUE_BASE = 4352u;
+const uint CACHE_VALID_BASE = 4608u;
+const uint CACHE_SLOTS = 256u;
+const uint CACHE_SETS = 64u;
+const uint CACHE_WAYS = 4u;
+const uint CACHE_OVERFLOW_INDEX = 4864u;
+const uint MEMOP_PENDING_INDEX = 4865u;
+const uint MEMOP_SOURCE_PHYSICAL_INDEX = 4866u;
+const uint MEMOP_DESTINATION_PHYSICAL_INDEX = 4867u;
+const uint MEMOP_BYTE_COUNT_INDEX = 4868u;
+const uint RTC_LOW_INDEX = 4869u;
+const uint RTC_HIGH_INDEX = 4870u;
 
 const uint PRIVILEGE_USER = 0u;
 const uint PRIVILEGE_SUPERVISOR = 1u;
@@ -126,6 +152,14 @@ ivec2 stateWordCoordinate(uint index) {
 
 ivec2 ramWordCoordinate(uint index) {
     return ivec2(int(index % RAM_TEXTURE_WIDTH), int(index / RAM_TEXTURE_WIDTH));
+}
+
+ivec2 guestWordCoordinate(uint index) {
+    return ivec2(int(index % GUEST_TEXTURE_WIDTH), int(index / GUEST_TEXTURE_WIDTH));
+}
+
+ivec2 mtdWordCoordinate(uint index) {
+    return ivec2(int(index % MTD_TEXTURE_WIDTH), int(index / MTD_TEXTURE_WIDTH));
 }
 
 uint decodeWord(vec4 encoded) {
@@ -151,10 +185,10 @@ uint readStateWord(uint index) {
 }
 
 uint readGuestWord(uint index) {
-    if (index >= RAM_TEXTURE_WORDS) {
+    if (index >= GUEST_TEXTURE_WORDS) {
         return 0u;
     }
-    return decodeWord(texelFetch(GuestImageSampler, ramWordCoordinate(index), 0));
+    return decodeWord(texelFetch(GuestImageSampler, guestWordCoordinate(index), 0));
 }
 
 bool guestDescriptorPresent() {
@@ -178,7 +212,22 @@ uint readRegister(uint index) {
 }
 
 uint readMemoryWord(uint address) {
-    return decodeWord(texelFetch(RamSampler, ramWordCoordinate(address >> 2u), 0));
+    uint wordAddress = address & ~3u;
+    uint wordIndex = wordAddress >> 2u;
+    uint cacheSet = (wordIndex ^ (wordIndex >> 7u) ^ (wordIndex >> 13u))
+        & (CACHE_SETS - 1u);
+    for (uint way = 0u; way < CACHE_WAYS; ++way) {
+        uint slot = cacheSet * CACHE_WAYS + way;
+        if (readStateWord(CACHE_VALID_BASE + slot) != 0u
+                && readStateWord(CACHE_TAG_BASE + slot) == wordAddress) {
+            return readStateWord(CACHE_VALUE_BASE + slot);
+        }
+    }
+    return decodeWord(texelFetch(RamSampler, ramWordCoordinate(wordIndex), 0));
+}
+
+uint readRamWord(uint index) {
+    return decodeWord(texelFetch(RamSampler, ramWordCoordinate(index), 0));
 }
 
 bool ramAddressValid(uint address, uint width) {
@@ -200,6 +249,11 @@ bool dtbAddressValid(uint address, uint width) {
 uint readDtbWord(uint address) {
     uint offset = address - guestDtbAddress();
     return decodeWord(texelFetch(DtbImageSampler, ivec2(int(offset >> 2u), 0), 0));
+}
+
+uint readMtdWord(uint address) {
+    uint offset = address - MTD_BASE_ADDRESS;
+    return decodeWord(texelFetch(MtdImageSampler, mtdWordCoordinate(offset >> 2u), 0));
 }
 
 uint clintStateIndex(uint address) {
@@ -243,15 +297,32 @@ bool plicAccessValid(uint address, uint width) {
         || address == PLIC_SUPERVISOR_CLAIM_COMPLETE_ADDRESS);
 }
 
+bool rtcAccessValid(uint address, uint width) {
+    return address >= RTC_BASE_ADDRESS && width > 0u
+        && address - RTC_BASE_ADDRESS <= RTC_REGISTER_BYTES - width;
+}
+
 bool physicalAccessValid(uint address, uint width, bool writeAccess) {
     if (ramAddressValid(address, width)) return true;
-    if (!writeAccess && dtbAddressValid(address, width)) return true;
+    if (dtbAddressValid(address, width)) return true;
+    if (!writeAccess && address >= MTD_BASE_ADDRESS && width > 0u
+            && width <= MTD_BYTES
+            && address - MTD_BASE_ADDRESS <= MTD_BYTES - width) return true;
     return (width == 4u && clintStateIndex(address) != INVALID_INDEX)
-        || uartAccessValid(address, width) || plicAccessValid(address, width);
+        || uartAccessValid(address, width) || plicAccessValid(address, width)
+        || rtcAccessValid(address, width);
 }
 
 uint readPhysicalWord(uint address) {
     if (dtbAddressValid(address, 1u)) return readDtbWord(address);
+    if (address >= MTD_BASE_ADDRESS
+            && address - MTD_BASE_ADDRESS <= MTD_BYTES - 4u) {
+        return readMtdWord(address);
+    }
+    if (rtcAccessValid(address, 1u)) {
+        return address < RTC_BASE_ADDRESS + 4u
+            ? readStateWord(RTC_LOW_INDEX) : readStateWord(RTC_HIGH_INDEX);
+    }
     uint clintIndex = clintStateIndex(address);
     if (clintIndex != INVALID_INDEX) return readStateWord(clintIndex);
     if (uartAccessValid(address, 1u)) {
@@ -323,43 +394,26 @@ uint multiplyHighSigned(uint left, uint right) {
 }
 
 uint csrStateIndex(uint address) {
-    if (address == CSR_MSTATUS || address == CSR_SSTATUS) return CSR_BASE + 0u;
-    if (address == CSR_MEDELEG) return CSR_BASE + 1u;
-    if (address == CSR_MIDELEG) return CSR_BASE + 2u;
-    if (address == CSR_MIE || address == CSR_SIE) return CSR_BASE + 3u;
-    if (address == CSR_MTVEC) return CSR_BASE + 4u;
-    if (address == CSR_MSCRATCH) return CSR_BASE + 5u;
-    if (address == CSR_MEPC) return CSR_BASE + 6u;
-    if (address == CSR_MCAUSE) return CSR_BASE + 7u;
-    if (address == CSR_MTVAL) return CSR_BASE + 8u;
-    if (address == CSR_MIP || address == CSR_SIP) return CSR_BASE + 9u;
-    if (address == CSR_SATP) return CSR_BASE + 10u;
-    if (address == CSR_STVEC) return CSR_BASE + 11u;
-    if (address == CSR_SSCRATCH) return CSR_BASE + 12u;
-    if (address == CSR_SEPC) return CSR_BASE + 13u;
-    if (address == CSR_SCAUSE) return CSR_BASE + 14u;
-    if (address == CSR_STVAL) return CSR_BASE + 15u;
-    return INVALID_INDEX;
+    if (address == CSR_SSTATUS) return CSR_MSTATUS;
+    if (address == CSR_SIE) return CSR_MIE;
+    if (address == CSR_SIP) return CSR_MIP;
+    return address < 4096u ? address : INVALID_INDEX;
 }
 
 bool csrSupported(uint address) {
-    return csrStateIndex(address) != INVALID_INDEX
-        || address == CSR_MISA
-        || address == CSR_MCYCLE
-        || address == CSR_MINSTRET
-        || address == CSR_CYCLE
-        || address == CSR_INSTRET
-        || address == CSR_MHARTID;
+    return address < 4096u;
 }
 
 bool csrWritable(uint address) {
-    return csrStateIndex(address) != INVALID_INDEX;
+    return csrStateIndex(address) != INVALID_INDEX
+        && ((address >> 10u) & 0x3u) != 0x3u;
 }
 
 uint csrWriteMask(uint address) {
     if (address == CSR_SSTATUS) return 0x000de162u;
     if (address == CSR_SIE) return 0x00000222u;
     if (address == CSR_SIP || address == CSR_MIP) return 0x00000022u;
+    if (address == CSR_MIDELEG) return 0x00000666u;
     return 0xffffffffu;
 }
 
@@ -369,11 +423,13 @@ bool csrAccessible(uint address, uint privilege) {
 }
 
 uint readCSR(uint address) {
-    if (address == CSR_MISA) return 0x40001101u; // RV32IMA
+    if (address == CSR_MISA) return 0x40141101u; // RV32AIMSU
     if (address == CSR_MCYCLE || address == CSR_MINSTRET
             || address == CSR_CYCLE || address == CSR_INSTRET) {
         return readStateWord(CYCLE_INDEX);
     }
+    if (address == CSR_TIME) return readStateWord(CLINT_MTIME_LOW_INDEX);
+    if (address == CSR_TIMEH) return readStateWord(CLINT_MTIME_HIGH_INDEX);
     if (address == CSR_MHARTID) return 0u;
     uint index = csrStateIndex(address);
     uint value = index == INVALID_INDEX ? 0u : readStateWord(index);
@@ -489,6 +545,8 @@ uint initialWord(uint index) {
     if (index == CLINT_MTIMECMP_LOW_INDEX
             || index == CLINT_MTIMECMP_HIGH_INDEX) return 0xffffffffu;
     if (index == PLIC_PRIORITY_INDEX) return 1u;
+    if (index == RTC_LOW_INDEX) return 0x00000020u;
+    if (index == RTC_HIGH_INDEX) return 0x26082805u;
     if (index >= DEVICE_BASE && index < REGISTER_BASE) return 0u;
     if (index == REGISTER_BASE + 10u) return 0u;
     if (index == REGISTER_BASE + 11u) return guestDtbAddress();
@@ -503,6 +561,11 @@ void main() {
 
     if (readStateWord(MAGIC_INDEX) != MAGIC_VALUE) {
         fragColor = encodeWord(initialWord(outputIndex));
+        return;
+    }
+
+    if (readRamWord(RAM_MAGIC_INDEX) != RAM_MAGIC_VALUE) {
+        fragColor = encodeWord(readStateWord(outputIndex));
         return;
     }
 
@@ -529,6 +592,11 @@ void main() {
         fragColor = encodeWord(currentWord);
         return;
     }
+    if (readStateWord(CACHE_OVERFLOW_INDEX) != 0u
+            || readStateWord(MEMOP_PENDING_INDEX) != 0u) {
+        fragColor = encodeWord(currentWord);
+        return;
+    }
 
     uint nextPc = pc + 4u;
     uint nextStatus = STATUS_RUNNING;
@@ -550,6 +618,10 @@ void main() {
     uint trapCause = 0u;
     uint trapValue = 0u;
     uint trapMstatus = 0u;
+    bool memopTrigger = false;
+    uint memopSourcePhysical = 0u;
+    uint memopDestinationPhysical = 0u;
+    uint memopByteCount = 0u;
 
     uint enabledPending = readCSR(CSR_MIP) & readCSR(CSR_MIE);
     uint delegatedPending = enabledPending & readCSR(CSR_MIDELEG);
@@ -909,6 +981,9 @@ void main() {
                         && currentPrivilege >= PRIVILEGE_SUPERVISOR) {
                     // Address translation reads page tables directly; SFENCE.VMA
                     // completes as a synchronization point.
+                } else if (instruction == 0x10500073u
+                        && currentPrivilege >= PRIVILEGE_SUPERVISOR) {
+                    // WFI completes as a scheduling hint while timer state advances.
                 } else {
                     legal = false;
                 }
@@ -940,6 +1015,25 @@ void main() {
                         uint rawCSRValue = readStateWord(csrWriteIndex);
                         csrWriteValue = (rawCSRValue & ~writeMask)
                             | (requestedCSRValue & writeMask);
+                        if (csrAddress == CSR_MEMOP_OP) {
+                            uint sourceVirtual = readCSR(CSR_MEMOP_SRC);
+                            uint destinationVirtual = readCSR(CSR_MEMOP_DST);
+                            bool sourceTranslated = translateAddress(
+                                sourceVirtual, ACCESS_LOAD, dataPrivilege,
+                                memopSourcePhysical);
+                            bool destinationTranslated = translateAddress(
+                                destinationVirtual, ACCESS_STORE, dataPrivilege,
+                                memopDestinationPhysical);
+                            if (!sourceTranslated || !destinationTranslated) {
+                                takeTrap = true;
+                                trapCause = sourceTranslated ? 15u : 13u;
+                                trapValue = sourceTranslated
+                                    ? destinationVirtual : sourceVirtual;
+                            } else {
+                                memopTrigger = true;
+                                memopByteCount = readCSR(CSR_MEMOP_N);
+                            }
+                        }
                     }
                 }
             }
@@ -988,8 +1082,81 @@ void main() {
         }
     }
 
-    if (writeMemory) {
-        nextReservationValid = 0u;
+    if (writeMemory) nextReservationValid = 0u;
+
+    uint uartOffset = memoryAddress - UART_BASE_ADDRESS;
+    bool uartWrite = writeMemory && uartAccessValid(memoryAddress, memoryWidth);
+    bool uartDivisorLatch = (readStateWord(UART_LCR_INDEX) & 0x80u) != 0u;
+    bool uartTransmit = uartWrite && uartOffset == 0u && !uartDivisorLatch;
+
+    bool cacheWrite = writeMemory && ramAddressValid(memoryAddress, memoryWidth);
+    uint cacheWriteAddress = memoryAddress;
+    uint cacheWriteValue = memoryValue;
+    uint cacheWriteWidth = memoryWidth;
+    if (uartTransmit) {
+        uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
+        cacheWrite = true;
+        cacheWriteAddress = guestLoadAddress() + UART_TX_BUFFER_OFFSET
+            + uartHead % UART_TX_BUFFER_BYTES;
+        cacheWriteWidth = 1u;
+    }
+
+    uint cacheSlot = INVALID_INDEX;
+    uint cacheTag = 0u;
+    uint cacheValue = 0u;
+    bool cacheOverflow = false;
+    if (cacheWrite) {
+        uint offset = ramAddressOffset(cacheWriteAddress);
+        cacheTag = offset & ~3u;
+        uint oldValue = readMemoryWord(cacheTag);
+        uint shift = (offset & 3u) * 8u;
+        if (cacheWriteWidth == 1u) {
+            uint mask = 0xffu << shift;
+            cacheValue = (oldValue & ~mask) | ((cacheWriteValue << shift) & mask);
+        } else if (cacheWriteWidth == 2u) {
+            uint mask = 0xffffu << shift;
+            cacheValue = (oldValue & ~mask) | ((cacheWriteValue << shift) & mask);
+        } else {
+            cacheValue = cacheWriteValue;
+        }
+        if (cacheValue == oldValue) {
+            cacheWrite = false;
+        } else {
+            uint wordIndex = cacheTag >> 2u;
+            uint cacheSet = (wordIndex ^ (wordIndex >> 7u) ^ (wordIndex >> 13u))
+                & (CACHE_SETS - 1u);
+            for (uint way = 0u; way < CACHE_WAYS; ++way) {
+                uint candidate = cacheSet * CACHE_WAYS + way;
+                if (readStateWord(CACHE_VALID_BASE + candidate) != 0u
+                        && readStateWord(CACHE_TAG_BASE + candidate) == cacheTag) {
+                    cacheSlot = candidate;
+                    break;
+                }
+            }
+            if (cacheSlot == INVALID_INDEX) {
+                for (uint way = 0u; way < CACHE_WAYS; ++way) {
+                    uint candidate = cacheSet * CACHE_WAYS + way;
+                    if (readStateWord(CACHE_VALID_BASE + candidate) == 0u) {
+                        cacheSlot = candidate;
+                        break;
+                    }
+                }
+            }
+            cacheOverflow = cacheSlot == INVALID_INDEX;
+        }
+    }
+
+    if (cacheOverflow) {
+        nextPc = pc;
+        nextStatus = currentStatus;
+        nextPrivilege = currentPrivilege;
+        nextReservationAddress = readStateWord(RESERVATION_ADDRESS_INDEX);
+        nextReservationValid = readStateWord(RESERVATION_VALID_INDEX);
+        writeRegister = false;
+        writeCSR = false;
+        writeMemory = false;
+        uartWrite = false;
+        uartTransmit = false;
     }
 
     uint outputWord = currentWord;
@@ -1040,11 +1207,12 @@ void main() {
             && clintWriteIndex != INVALID_INDEX && outputIndex == clintWriteIndex) {
         outputWord = memoryValue;
     }
+    if (writeMemory && rtcAccessValid(memoryAddress, memoryWidth)
+            && memoryAddress == RTC_BASE_ADDRESS) {
+        if (outputIndex == RTC_LOW_INDEX) outputWord = 0x00000020u;
+        if (outputIndex == RTC_HIGH_INDEX) outputWord = 0x26082805u;
+    }
 
-    uint uartOffset = memoryAddress - UART_BASE_ADDRESS;
-    bool uartWrite = writeMemory && uartAccessValid(memoryAddress, memoryWidth);
-    bool uartDivisorLatch = (readStateWord(UART_LCR_INDEX) & 0x80u) != 0u;
-    bool uartTransmit = uartWrite && uartOffset == 0u && !uartDivisorLatch;
     if (uartWrite && uartOffset == 1u && !uartDivisorLatch
             && outputIndex == UART_IER_INDEX) {
         outputWord = memoryValue & 0x0fu;
@@ -1061,22 +1229,26 @@ void main() {
         }
     }
 
-    bool ramWrite = writeMemory && ramAddressValid(memoryAddress, memoryWidth);
-    uint ramWriteAddress = memoryAddress;
-    uint ramWriteValue = memoryValue;
-    uint ramWriteWidth = memoryWidth;
-    if (uartTransmit) {
-        uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
-        ramWrite = true;
-        ramWriteAddress = guestLoadAddress() + UART_TX_BUFFER_ADDRESS
-            + uartHead % UART_TX_BUFFER_BYTES;
-        ramWriteValue = memoryValue;
-        ramWriteWidth = 1u;
+    if (cacheWrite && !cacheOverflow && outputIndex == CACHE_TAG_BASE + cacheSlot) {
+        outputWord = cacheTag;
     }
-    if (outputIndex == RAM_WRITE_VALID_INDEX) outputWord = ramWrite ? 1u : 0u;
-    if (outputIndex == RAM_WRITE_ADDRESS_INDEX) outputWord = ramWriteAddress;
-    if (outputIndex == RAM_WRITE_VALUE_INDEX) outputWord = ramWriteValue;
-    if (outputIndex == RAM_WRITE_WIDTH_INDEX) outputWord = ramWriteWidth;
+    if (cacheWrite && !cacheOverflow && outputIndex == CACHE_VALUE_BASE + cacheSlot) {
+        outputWord = cacheValue;
+    }
+    if (cacheWrite && !cacheOverflow && outputIndex == CACHE_VALID_BASE + cacheSlot) {
+        outputWord = 1u;
+    }
+    if (cacheOverflow && outputIndex == CACHE_OVERFLOW_INDEX) outputWord = 1u;
+    if (memopTrigger && outputIndex == MEMOP_PENDING_INDEX) outputWord = 1u;
+    if (memopTrigger && outputIndex == MEMOP_SOURCE_PHYSICAL_INDEX) {
+        outputWord = memopSourcePhysical;
+    }
+    if (memopTrigger && outputIndex == MEMOP_DESTINATION_PHYSICAL_INDEX) {
+        outputWord = memopDestinationPhysical;
+    }
+    if (memopTrigger && outputIndex == MEMOP_BYTE_COUNT_INDEX) {
+        outputWord = memopByteCount;
+    }
 
     if (writeMemory && memoryWidth == 4u) {
         if (memoryAddress == PLIC_PRIORITY_ADDRESS

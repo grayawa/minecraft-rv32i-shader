@@ -86,7 +86,7 @@ def platform_tree() -> Node:
         "memory@80000000",
         properties=[
             string_property("device_type", "memory"),
-            cell_property("reg", 0, 0x80000000, 0, 0x000FFFFC),
+            cell_property("reg", 0, 0x80000000, 0, 0x00BFF000),
         ],
     )
     clint = Node(

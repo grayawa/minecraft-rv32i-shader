@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import struct
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from build_dtb import (
 
 
 MASK32 = 0xFFFFFFFF
-RAM_BYTES = 262_143 * 4
+RAM_BYTES = 0x00BFF000
 FRAMEBUFFER_ADDRESS = 0x1000
 FRAMEBUFFER_WORDS = 32 * 18
 UART_TX_BUFFER_ADDRESS = 0x1900
@@ -987,11 +988,21 @@ def parse_dtb_properties(dtb: bytes) -> dict[str, dict[str, bytes]]:
 
 def main() -> None:
     project_root = Path(__file__).resolve().parents[1]
+    step_shader = (
+        project_root / "assets" / "mcrv" / "shaders" / "post" / "rv32_step.fsh"
+    ).read_text(encoding="utf-8")
+    display_shader = (
+        project_root / "assets" / "mcrv" / "shaders" / "post" / "rv32_display.fsh"
+    ).read_text(encoding="utf-8")
+    assert "const uint UART_TX_BUFFER_OFFSET = RAM_BYTES;" in step_shader
+    assert "if (dtbAddressValid(address, width)) return true;" in step_shader
+    assert "const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;" in display_shader
+
     texture_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect" / "guest_demo.png"
     )
     width, height, texture_bytes = decode_guest_texture(texture_path.read_bytes())
-    assert (width, height) == (1024, 256)
+    assert (width, height) == (2048, 1024)
     program = list(struct.unpack_from(f"<{len(EXPECTED_PROGRAM)}I", texture_bytes))
     assert program == EXPECTED_PROGRAM
     descriptor_offset = len(texture_bytes) - BOOT_DESCRIPTOR_WORDS * 4
@@ -1010,8 +1021,8 @@ def main() -> None:
     ]
     assert len(step_passes) == 2
     assert post_effect["targets"]["ram_a"] == {
-        "width": 1024,
-        "height": 256,
+        "width": 4096,
+        "height": 768,
         "persistent": True,
         "clear_color": [0.0, 0.0, 0.0, 0.0],
     }
@@ -1023,8 +1034,8 @@ def main() -> None:
         assert guest_input == {
             "sampler_name": "GuestImage",
             "location": "mcrv:guest_demo",
-            "width": 1024,
-            "height": 256,
+            "width": 2048,
+            "height": 1024,
         }
         dtb_input = next(
             item for item in entry["inputs"] if item["sampler_name"] == "DtbImage"
@@ -1045,14 +1056,16 @@ def main() -> None:
     assert [entry["output"] for entry in commit_passes] == ["ram_b", "ram_a"]
     for entry in commit_passes:
         assert [item["sampler_name"] for item in entry["inputs"]] == [
-            "Ram", "State", "GuestImage"
+            "Ram", "State", "GuestImage", "MtdImage"
         ]
     assert [entry["fragment_shader"] for entry in post_effect["passes"]] == [
         "minecraft:post/blit",
         "mcrv:post/rv32_step",
         "mcrv:post/rv32_ram_commit",
+        "mcrv:post/rv32_cache_clear",
         "mcrv:post/rv32_step",
         "mcrv:post/rv32_ram_commit",
+        "mcrv:post/rv32_cache_clear",
         "mcrv:post/rv32_display",
     ]
     display_pass = post_effect["passes"][-1]
@@ -1074,7 +1087,7 @@ def main() -> None:
             item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
         )
         assert guest_input["location"] == "mcrv:guest_boot_probe"
-        assert (guest_input["width"], guest_input["height"]) == (1024, 256)
+        assert (guest_input["width"], guest_input["height"]) == (2048, 1024)
         dtb_input = next(
             item for item in entry["inputs"] if item["sampler_name"] == "DtbImage"
         )
@@ -1091,9 +1104,60 @@ def main() -> None:
         assert guest_input == {
             "sampler_name": "GuestImage",
             "location": "mcrv:guest_boot_probe",
-            "width": 1024,
-            "height": 256,
+            "width": 2048,
+            "height": 1024,
         }
+
+    linux_effect_path = (
+        project_root / "assets" / "mcrv" / "post_effect" / "rv32i_linux.json"
+    )
+    linux_effect = json.loads(linux_effect_path.read_text(encoding="utf-8"))
+    linux_step_passes = [
+        entry for entry in linux_effect["passes"]
+        if entry["fragment_shader"] == "mcrv:post/rv32_step"
+    ]
+    assert len(linux_step_passes) == 64
+    assert len(linux_effect["passes"]) == 70
+    for entry in linux_step_passes:
+        inputs = {item["sampler_name"]: item for item in entry["inputs"]}
+        assert inputs["GuestImage"]["location"] == "mcrv:guest_linux"
+        assert inputs["DtbImage"]["location"] == "mcrv:dtb_rvc_linux"
+        assert inputs["MtdImage"]["location"] == "mcrv:mtd_linux"
+
+    linux_guest_path = (
+        project_root / "assets" / "mcrv" / "textures" / "effect"
+        / "guest_linux.png"
+    )
+    linux_width, linux_height, linux_texture = decode_guest_texture(
+        linux_guest_path.read_bytes()
+    )
+    assert (linux_width, linux_height) == (2048, 1024)
+    linux_payload_size = 8_305_028
+    assert hashlib.sha256(linux_texture[:linux_payload_size]).hexdigest() == (
+        "75a060159e959c833df4305839705fdb185752cc6b730b0f3c72854a5d4b3de1"
+    )
+    assert linux_texture[0x8F0:0x8F8] == bytes.fromhex("1385050067800000")
+    assert struct.unpack_from("<4I", linux_texture, len(linux_texture) - 16) == (
+        0x1020, 0x80000000, 0x80000000, BOOT_MAGIC
+    )
+
+    linux_dtb = (project_root / "programs" / "rvc-linux.dtb").read_bytes()
+    linux_dtb_properties = parse_dtb_properties(linux_dtb)
+    assert struct.unpack(">4I", linux_dtb_properties["/memory@80000000"]["reg"]) == (
+        0, 0x80000000, 0, RAM_BYTES
+    )
+    assert b"init=/rvcinit" in linux_dtb_properties["/chosen"]["bootargs"]
+
+    mtd_width, mtd_height, mtd_texture = decode_guest_texture(
+        (project_root / "assets" / "mcrv" / "textures" / "effect"
+         / "mtd_linux.png").read_bytes()
+    )
+    assert (mtd_width, mtd_height) == (4096, 3447)
+    rootfs_size = int.from_bytes(mtd_texture[8:12], "big")
+    assert rootfs_size == 56_466_528
+    assert hashlib.sha256(mtd_texture[:rootfs_size]).hexdigest() == (
+        "b8e1655993bb05358263d39863937f0f643a616072fe0079d1ca338028be5f3d"
+    )
 
     dtb_texture_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect" / "dtb_mcrv.png"
@@ -1130,7 +1194,7 @@ def main() -> None:
     boot_width, boot_height, boot_texture = decode_guest_texture(
         boot_texture_path.read_bytes()
     )
-    assert (boot_width, boot_height) == (1024, 256)
+    assert (boot_width, boot_height) == (2048, 1024)
     boot_descriptor_offset = len(boot_texture) - BOOT_DESCRIPTOR_WORDS * 4
     dtb_address, entry_point, load_address, magic = struct.unpack_from(
         "<4I", boot_texture, boot_descriptor_offset
@@ -1210,7 +1274,8 @@ def main() -> None:
     print(
         "RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer "
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
-        "0x80000000 boot descriptor, platform DTB and a0/a1 probe"
+        "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
+        "12 MiB RAM DTB, 56,466,528-byte ROMFS and 70-pass profile"
     )
 
 

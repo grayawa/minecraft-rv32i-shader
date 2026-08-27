@@ -17,15 +17,20 @@ layout(std140) uniform SamplerInfo {
 layout(location = 0) out vec4 fragColor;
 
 const uint STATE_TEXTURE_WIDTH = 128u;
-const uint RAM_TEXTURE_WIDTH = 1024u;
+const uint RAM_TEXTURE_WIDTH = 4096u;
+const uint RAM_TEXTURE_WORDS = 3145728u;
+const uint RAM_WORDS = RAM_TEXTURE_WORDS - 1024u;
 const uint REGISTER_BASE = 16348u;
 const uint STATUS_INDEX = 16380u;
 const uint CYCLE_INDEX = 16381u;
 const uint PC_INDEX = 16382u;
+const uint CSR_MEPC_INDEX = 0x341u;
+const uint CSR_MCAUSE_INDEX = 0x342u;
+const uint CSR_MTVAL_INDEX = 0x343u;
 const uint FRAMEBUFFER_BASE = 1024u;
 const uint UART_TX_HEAD_INDEX = 16307u;
-const uint UART_TX_BUFFER_ADDRESS = 0x00001900u;
-const uint UART_TX_BUFFER_BYTES = 64u;
+const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;
+const uint UART_TX_BUFFER_BYTES = 256u;
 const ivec2 FRAMEBUFFER_SIZE = ivec2(32, 18);
 
 ivec2 stateWordCoordinate(uint index) {
@@ -54,7 +59,15 @@ uint readByte(uint address) {
 }
 
 uint glyphBits(int code) {
+    if (code >= 97 && code <= 122) code -= 32;
     switch (code) {
+        case 32: return 0x000000u; // space
+        case 35: return 0x5F55F5u; // #
+        case 40: return 0x244442u; // (
+        case 41: return 0x422224u; // )
+        case 45: return 0x000F00u; // -
+        case 46: return 0x200000u; // .
+        case 47: return 0x442211u; // /
         case 48: return 0x69DB96u; // 0
         case 49: return 0x722262u; // 1
         case 50: return 0xF42196u; // 2
@@ -71,9 +84,14 @@ uint glyphBits(int code) {
         case 68: return 0xE9999Eu; // D
         case 69: return 0xF88E8Fu; // E
         case 70: return 0x888E8Fu; // F
+        case 71: return 0x698B96u; // G
+        case 72: return 0x999F99u; // H
         case 73: return 0xF2222Fu; // I
+        case 74: return 0x4AA22Fu; // J
         case 75: return 0x99ACA9u; // K
+        case 76: return 0xF88888u; // L
         case 77: return 0x999FF9u; // M
+        case 78: return 0x999BD9u; // N
         case 79: return 0x699996u; // O
         case 80: return 0x888E9Eu; // P
         case 81: return 0x7B9996u; // Q
@@ -82,8 +100,13 @@ uint glyphBits(int code) {
         case 84: return 0x22222Fu; // T
         case 85: return 0x699999u; // U
         case 86: return 0x669999u; // V
+        case 87: return 0x6FF999u; // W
         case 88: return 0x996699u; // X
         case 89: return 0x222699u; // Y
+        case 90: return 0xF8421Fu; // Z
+        case 91: return 0x644446u; // [
+        case 93: return 0x622226u; // ]
+        case 95: return 0xF00000u; // _
         default: return 0u;
     }
 }
@@ -186,37 +209,39 @@ void main() {
         colour = pixelColour;
     }
 
-    // The UART line shows the newest 32 bytes from the transmit ring.
-    vec2 uartPanelOrigin = vec2(116.0, 135.0);
+    // The UART panel shows the newest 96 bytes as three fixed-width rows.
+    vec2 uartPanelOrigin = vec2(116.0, 134.0);
     vec2 uartPanelPixel = p - uartPanelOrigin;
     if (uartPanelPixel.x >= 0.0 && uartPanelPixel.x < 192.0
-            && uartPanelPixel.y >= 0.0 && uartPanelPixel.y < 10.0) {
+            && uartPanelPixel.y >= 0.0 && uartPanelPixel.y < 26.0) {
         colour = mix(colour, vec3(0.008, 0.025, 0.034), 0.88);
     }
     float uartLabelInk = 0.0;
-    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(118.0, 137.0), 84, 1.0));
-    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(123.0, 137.0), 88, 1.0));
+    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(118.0, 136.0), 84, 1.0));
+    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(123.0, 136.0), 88, 1.0));
     colour = mix(colour, textColour * 0.88, uartLabelInk);
 
     uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
-    uint uartCount = min(uartHead, 32u);
+    uint uartCount = min(uartHead, 96u);
     uint uartStart = uartHead - uartCount;
     float uartInk = 0.0;
-    for (int index = 0; index < 32; ++index) {
+    for (int index = 0; index < 96; ++index) {
         if (uint(index) < uartCount) {
             uint bufferOffset = (uartStart + uint(index)) % UART_TX_BUFFER_BYTES;
-            int code = int(readByte(UART_TX_BUFFER_ADDRESS + bufferOffset));
+            int code = int(readByte(UART_TX_BUFFER_OFFSET + bufferOffset));
+            float column = float(index % 32);
+            float row = float(index / 32);
             uartInk = max(uartInk, glyphPixel(p,
-                vec2(133.0 + float(index) * 5.0, 137.0), code, 1.0));
+                vec2(143.0 + column * 5.0, 136.0 + row * 8.0), code, 1.0));
         }
     }
     colour = mix(colour, valueColour, uartInk);
 
-    // A compact memory activity strip visualizes the first 384 RAM words.
-    vec2 memoryOrigin = vec2(116.0, 149.0);
+    // A compact memory activity strip visualizes the first 128 RAM words.
+    vec2 memoryOrigin = vec2(116.0, 164.0);
     vec2 memoryPixel = p - memoryOrigin;
     if (memoryPixel.x >= 0.0 && memoryPixel.x < 192.0
-            && memoryPixel.y >= 0.0 && memoryPixel.y < 18.0) {
+            && memoryPixel.y >= 0.0 && memoryPixel.y < 6.0) {
         ivec2 cell = ivec2(floor(memoryPixel / 3.0));
         uint index = uint(cell.y * 64 + cell.x);
         uint value = readRamWord(index);
@@ -246,13 +271,27 @@ void main() {
     valueInk = max(valueInk, drawHex(p, vec2(25.0, 39.0), readStateWord(CYCLE_INDEX), 1.0));
     valueInk = max(valueInk, drawHex(p, vec2(25.0, 50.0), readStateWord(STATUS_INDEX), 1.0));
 
-    for (int row = 0; row < 8; ++row) {
+    for (int row = 0; row < 5; ++row) {
         int registerIndex = row + 1;
         float y = 68.0 + float(row) * 13.0;
         float registerLabel = drawRegisterLabel(p, vec2(10.0, y), registerIndex);
         colour = mix(colour, textColour * 0.88, registerLabel);
         valueInk = max(valueInk, drawHex(p, vec2(29.0, y),
                                          readStateWord(REGISTER_BASE + uint(registerIndex)), 1.0));
+    }
+
+    const int trapLabelFirst[3] = int[3](77, 77, 77);
+    const int trapLabelSecond[3] = int[3](67, 69, 84);
+    const uint trapStateIndex[3] = uint[3](
+        CSR_MCAUSE_INDEX, CSR_MEPC_INDEX, CSR_MTVAL_INDEX);
+    for (int row = 0; row < 3; ++row) {
+        float y = 133.0 + float(row) * 13.0;
+        float trapLabel = glyphPixel(p, vec2(10.0, y), trapLabelFirst[row], 1.0);
+        trapLabel = max(trapLabel,
+            glyphPixel(p, vec2(15.0, y), trapLabelSecond[row], 1.0));
+        colour = mix(colour, textColour * 0.88, trapLabel);
+        valueInk = max(valueInk,
+            drawHex(p, vec2(29.0, y), readStateWord(trapStateIndex[row]), 1.0));
     }
     colour = mix(colour, valueColour, valueInk);
 
