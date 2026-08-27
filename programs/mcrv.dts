@@ -1,0 +1,79 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <0x2>;
+    #size-cells = <0x2>;
+    compatible = "minecraft,mcrv", "riscv-virtio";
+    model = "Minecraft Postprocess RV32IMA";
+
+    aliases {
+        serial0 = "/soc/uart@10000000";
+    };
+
+    chosen {
+        bootargs = "console=ttyS0 earlycon=uart8250,mmio,0x10000000";
+        stdout-path = "/soc/uart@10000000";
+    };
+
+    cpus {
+        #address-cells = <0x1>;
+        #size-cells = <0x0>;
+        timebase-frequency = <0x78>;
+
+        cpu@0 {
+            device_type = "cpu";
+            reg = <0x0>;
+            status = "okay";
+            compatible = "riscv";
+            riscv,isa = "rv32imasu";
+            mmu-type = "riscv,sv32";
+
+            cpu_intc: interrupt-controller {
+                #interrupt-cells = <0x1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+                phandle = <0x1>;
+            };
+        };
+    };
+
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x0 0x80000000 0x0 0xfeb0>;
+    };
+
+    soc {
+        #address-cells = <0x2>;
+        #size-cells = <0x2>;
+        compatible = "simple-bus";
+        ranges;
+
+        clint@2000000 {
+            compatible = "riscv,clint0";
+            reg = <0x0 0x2000000 0x0 0x10000>;
+            interrupts-extended = <&cpu_intc 0x3 &cpu_intc 0x7>;
+        };
+
+        plic: plic@c000000 {
+            #address-cells = <0x0>;
+            #interrupt-cells = <0x1>;
+            interrupt-controller;
+            compatible = "sifive,plic-1.0.0", "riscv,plic0";
+            reg = <0x0 0xc000000 0x0 0x4000000>;
+            interrupts-extended = <&cpu_intc 0xb &cpu_intc 0x9>;
+            riscv,ndev = <0xa>;
+            phandle = <0x2>;
+        };
+
+        uart0: uart@10000000 {
+            compatible = "ns16550a";
+            reg = <0x0 0x10000000 0x0 0x100>;
+            clock-frequency = <0x384000>;
+            current-speed = <0x1c200>;
+            interrupt-parent = <&plic>;
+            interrupts = <0xa>;
+            reg-shift = <0x0>;
+            reg-io-width = <0x1>;
+        };
+    };
+};

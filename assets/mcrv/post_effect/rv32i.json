@@ -51,7 +51,7 @@
         },
         {
           "sampler_name": "DtbImage",
-          "location": "mcrv:dtb_empty",
+          "location": "mcrv:dtb_mcrv",
           "width": 1024,
           "height": 1
         }
@@ -74,7 +74,7 @@
         },
         {
           "sampler_name": "DtbImage",
-          "location": "mcrv:dtb_empty",
+          "location": "mcrv:dtb_mcrv",
           "width": 1024,
           "height": 1
         }

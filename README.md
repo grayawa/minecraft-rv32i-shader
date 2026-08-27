@@ -37,6 +37,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - 可配置 load address、entry point 与 DTB address
 - `0x80000000` boot probe 与 `a0`/`a1` 启动寄存器检查
 - 4 KiB 只读 DTB texture window
+- 确定性 MCRV 平台 DTS/DTB 生成器
 - 原版资源包运行方式
 
 ## 运行环境
@@ -114,7 +115,7 @@ U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`�
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级、LR/SC reservation 和 CLINT 计时状态。
 
-当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括扩展 RAM texture、平台 DTB、OpenSBI payload 与 SBI 服务。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括扩展 RAM texture、OpenSBI payload 与 SBI 服务。
 
 ## 平台设备与中断
 
@@ -144,6 +145,20 @@ PLIC 使用 QEMU `virt` 风格地址与 UART source 10：
 | `0x0c201000` / `0x0c201004` | S-mode threshold / claim-complete |
 
 满足 priority、enable 与 threshold 条件的 M context 置位 MEIP，S context 置位 SEIP。读取 claim 返回 source 10 并锁定该 context，向 claim-complete 写回 source ID 完成本次中断。
+
+## 平台设备树
+
+[`mcrv.dts`](programs/mcrv.dts) 描述 shader 当前提供的单 hart RV32IMA 平台：
+
+| 节点 | 关键属性 |
+| --- | --- |
+| `/cpus/cpu@0` | `rv32imasu`、Sv32、hart 0 |
+| `/memory@80000000` | 基址 `0x80000000`，长度 65,200 字节 |
+| `/soc/clint@2000000` | machine software/timer interrupt |
+| `/soc/plic@c000000` | source 1–10，M/S external interrupt context |
+| `/soc/uart@10000000` | `ns16550a`，PLIC source 10 |
+
+`timebase-frequency` 为 120 Hz，对应默认两个 tick pass 在 60 FPS 下的 `mtime` 增长率。`chosen` 将串口设为 `/soc/uart@10000000`。[`build_dtb.py`](tools/build_dtb.py) 从同一平台模型确定性生成可读 DTS 与 1579-byte DTB。
 
 ## 纹理机器布局
 
@@ -186,7 +201,7 @@ guest image 同样使用 128 × 128 RGBA8 布局。初始化时，单词索引 `
 | `16382` | RAM 物理基址 |
 | `16383` | descriptor magic `0x4D435256` |
 
-复位时，`a0` 保存 hart ID `0`，`a1` 保存 DTB 物理地址。`DtbImageSampler` 提供 1024 个 RGBA 像素，对应 4 KiB 只读 DTB window。内置 framebuffer demo 使用物理基址与入口 `0x00000000`。boot probe 使用物理基址与入口 `0x80000000`，并将 `a1` 设为 `0x00001020`。
+复位时，`a0` 保存 hart ID `0`，`a1` 保存 DTB 物理地址。`DtbImageSampler` 提供 1024 个 RGBA 像素，对应 4 KiB 只读 DTB window。`dtb_mcrv.png` 保存平台 DTB 并映射到 `0x00001020`。内置 framebuffer demo 使用物理基址与入口 `0x00000000`。boot probe 使用物理基址与入口 `0x80000000`。
 
 ## CPU 状态码
 
@@ -216,10 +231,11 @@ python tools/bin_to_texture.py framebuffer_demo.bin assets/mcrv/textures/effect/
 
 转换器按小端顺序将每个 32 位单词写入一个 RGBA 像素，并在纹理尾部写入 boot descriptor。`rv32i.json` 将 `mcrv:guest_demo` 绑定为两个 CPU pass 的 `GuestImageSampler`。生成纹理后重新打包资源包。
 
-DTB binary 使用 raw texture 模式：
+生成平台 DTS、DTB 和 raw texture：
 
 ```powershell
-python tools/bin_to_texture.py board.dtb assets/mcrv/textures/effect/board_dtb.png `
+python tools/build_dtb.py programs/mcrv.dtb --dts-output programs/mcrv.dts
+python tools/bin_to_texture.py programs/mcrv.dtb assets/mcrv/textures/effect/dtb_mcrv.png `
   --width 1024 --height 1 --raw
 ```
 
@@ -230,7 +246,7 @@ python tools/bin_to_texture.py board.dtb assets/mcrv/textures/effect/board_dtb.p
 /posteffect add @s mcrv:rv32i_boot
 ```
 
-探针验证 `a0=0` 与 `a1=0x1020`，随后通过 UART 输出 `BOOT A1 OK` 并停在 PC `0x80000060`。
+探针验证 `a0=0`、`a1=0x1020` 和 FDT magic `D0 0D FE ED`，随后通过 UART 输出 `DTB A1 OK` 并停在 PC `0x8000008C`。
 
 构建 ZIP：
 
@@ -249,7 +265,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; 0x80000000 boot descriptor and a0/a1 probe
+RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; 0x80000000 boot descriptor, platform DTB and a0/a1 probe
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

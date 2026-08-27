@@ -8,6 +8,16 @@ from pathlib import Path
 
 from assemble_demo import assemble
 from bin_to_texture import BOOT_DESCRIPTOR_WORDS, BOOT_MAGIC, decode_guest_texture
+from build_dtb import (
+    FDT_BEGIN_NODE,
+    FDT_END,
+    FDT_END_NODE,
+    FDT_MAGIC,
+    FDT_PROP,
+    build_dtb,
+    platform_tree,
+    render_dts,
+)
 
 
 MASK32 = 0xFFFFFFFF
@@ -889,7 +899,7 @@ def run_demo(
 
 
 def run_boot_probe(program: list[int], load_address: int, entry_point: int,
-                   dtb_address: int) -> tuple[bytes, int, int]:
+                   dtb_address: int, dtb: bytes) -> tuple[bytes, int, int]:
     registers = [0] * 32
     registers[11] = dtb_address
     pc = entry_point
@@ -910,6 +920,10 @@ def run_boot_probe(program: list[int], load_address: int, entry_point: int,
             registers[rd] = instruction & 0xFFFFF000
         elif opcode == 0x13 and funct3 == 0:
             registers[rd] = (registers[rs1] + sign_extend(instruction >> 20, 12)) & MASK32
+        elif opcode == 0x03 and funct3 == 4:
+            address = (registers[rs1] + sign_extend(instruction >> 20, 12)) & MASK32
+            assert dtb_address <= address < dtb_address + len(dtb)
+            registers[rd] = dtb[address - dtb_address]
         elif opcode == 0x63 and funct3 == 1:
             if registers[rs1] != registers[rs2]:
                 next_pc = (pc + branch_immediate(instruction)) & MASK32
@@ -927,6 +941,48 @@ def run_boot_probe(program: list[int], load_address: int, entry_point: int,
         pc = next_pc
         cycles += 1
     return bytes(uart), pc, status
+
+
+def parse_dtb_properties(dtb: bytes) -> dict[str, dict[str, bytes]]:
+    header = struct.unpack_from(">10I", dtb)
+    magic, total_size, structure_offset, strings_offset = header[:4]
+    strings_size, structure_size = header[8:10]
+    assert magic == FDT_MAGIC
+    assert total_size == len(dtb)
+    assert strings_offset + strings_size == total_size
+    assert structure_offset + structure_size == strings_offset
+
+    strings = dtb[strings_offset : strings_offset + strings_size]
+    offset = structure_offset
+    stack: list[str] = []
+    properties: dict[str, dict[str, bytes]] = {}
+    while offset < strings_offset:
+        token = struct.unpack_from(">I", dtb, offset)[0]
+        offset += 4
+        if token == FDT_BEGIN_NODE:
+            end = dtb.index(0, offset)
+            name = dtb[offset:end].decode("ascii")
+            offset = (end + 4) & ~3
+            stack.append(name)
+            path = "/" + "/".join(part for part in stack if part)
+            properties[path] = {}
+        elif token == FDT_PROP:
+            length, name_offset = struct.unpack_from(">II", dtb, offset)
+            offset += 8
+            data = dtb[offset : offset + length]
+            offset = (offset + length + 3) & ~3
+            name_end = strings.index(0, name_offset)
+            name = strings[name_offset:name_end].decode("ascii")
+            path = "/" + "/".join(part for part in stack if part)
+            properties[path][name] = data
+        elif token == FDT_END_NODE:
+            stack.pop()
+        elif token == FDT_END:
+            assert stack == []
+            break
+        else:
+            raise AssertionError(f"FDT token {token}")
+    return properties
 
 
 def main() -> None:
@@ -968,7 +1024,7 @@ def main() -> None:
         )
         assert dtb_input == {
             "sampler_name": "DtbImage",
-            "location": "mcrv:dtb_empty",
+            "location": "mcrv:dtb_mcrv",
             "width": 1024,
             "height": 1,
         }
@@ -987,15 +1043,33 @@ def main() -> None:
             item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
         )
         assert guest_input["location"] == "mcrv:guest_boot_probe"
+        dtb_input = next(
+            item for item in entry["inputs"] if item["sampler_name"] == "DtbImage"
+        )
+        assert dtb_input["location"] == "mcrv:dtb_mcrv"
 
     dtb_texture_path = (
-        project_root / "assets" / "mcrv" / "textures" / "effect" / "dtb_empty.png"
+        project_root / "assets" / "mcrv" / "textures" / "effect" / "dtb_mcrv.png"
     )
     dtb_width, dtb_height, dtb_texture = decode_guest_texture(
         dtb_texture_path.read_bytes()
     )
     assert (dtb_width, dtb_height) == (1024, 1)
-    assert dtb_texture == bytes(4096)
+    tree = platform_tree()
+    dtb = build_dtb(tree)
+    assert (project_root / "programs" / "mcrv.dtb").read_bytes() == dtb
+    assert (project_root / "programs" / "mcrv.dts").read_text(encoding="utf-8") == render_dts(tree)
+    assert dtb_texture[:len(dtb)] == dtb
+    assert dtb_texture[len(dtb):] == bytes(4096 - len(dtb))
+    dtb_properties = parse_dtb_properties(dtb)
+    assert dtb_properties["/"]["compatible"] == b"minecraft,mcrv\0riscv-virtio\0"
+    assert struct.unpack(">I", dtb_properties["/cpus"]["timebase-frequency"])[0] == 120
+    assert struct.unpack(">4I", dtb_properties["/memory@80000000"]["reg"]) == (
+        0, 0x80000000, 0, RAM_BYTES
+    )
+    assert struct.unpack(">I", dtb_properties["/soc/plic@c000000"]["riscv,ndev"])[0] == 10
+    assert struct.unpack(">I", dtb_properties["/soc/uart@10000000"]["interrupts"])[0] == 10
+    assert dtb_properties["/chosen"]["stdout-path"] == b"/soc/uart@10000000\0"
 
     assembly_path = project_root / "programs" / "framebuffer_demo.S"
     assert assemble(assembly_path.read_text(encoding="utf-8")) == EXPECTED_PROGRAM
@@ -1022,10 +1096,10 @@ def main() -> None:
     )
     assert texture_boot_program == boot_program
     uart_output, boot_pc, boot_status = run_boot_probe(
-        boot_program, load_address, entry_point, dtb_address
+        boot_program, load_address, entry_point, dtb_address, dtb
     )
-    assert uart_output == b"BOOT A1 OK"
-    assert boot_pc == 0x80000060
+    assert uart_output == b"DTB A1 OK"
+    assert boot_pc == 0x8000008C
     assert boot_status == 1
     verify_high_multiply()
     verify_sv32_translation()
@@ -1089,7 +1163,7 @@ def main() -> None:
     print(
         "RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer "
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
-        "0x80000000 boot descriptor and a0/a1 probe"
+        "0x80000000 boot descriptor, platform DTB and a0/a1 probe"
     )
 
 
