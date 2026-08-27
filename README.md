@@ -1,6 +1,6 @@
 # Minecraft RV32IMA Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、CLINT、异常与中断 delegation，以及 trap 返回路径。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、CLINT、16550A 风格 UART、PLIC、异常与中断 delegation，以及 trap 返回路径。
 
 CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
@@ -14,7 +14,9 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - `ECALL` 与内存/指令异常的同步 trap entry
 - `medeleg`/`mideleg` delegation、`MRET` 与 `SRET`
 - CLINT `msip`、64 位 `mtimecmp` 与 64 位 `mtime`
-- machine software/timer 与 supervisor software/timer/external interrupt arbitration
+- 16550A 风格 UART transmit path 与 64-byte 输出 ring
+- PLIC UART source 10 与 hart 0 的 M/S context
+- machine software/timer/external 与 supervisor software/timer/external interrupt arbitration
 - `mtvec`/`stvec` direct 和 vectored trap 地址计算
 - Sv32 两级页表遍历、4 KiB 页面与 4 MiB superpage
 - R/W/X/U/A/D、`SUM`、`MXR` 权限检查
@@ -22,13 +24,14 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - instruction/load/store page fault 与 `SFENCE.VMA`
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
-- 65,264 字节小端 RAM
+- 65,200 字节小端 RAM
 - 8 位、16 位和 32 位 load/store
 - 自然对齐访问与标准 `cause`/`tval` 异常元数据
 - 32 × 18 单词显存，基地址为 `0x00001000`
 - 约 120 指令/秒的 60 FPS 默认执行速度
-- PC、周期、状态、`x1`–`x8`、显存与 RAM 活动仪表盘
-- 内置 RV32IMA、CSR、CLINT、interrupt、trap 自检与显存填充程序
+- PC、周期、状态、`x1`–`x8`、UART、显存与 RAM 活动仪表盘
+- 内置 RV32IMA、CSR、UART/PLIC、CLINT、interrupt、trap 自检与显存填充程序
+- demo 汇编器与汇编源/GLSL ROM 一致性检查
 - 平面 RV32 binary 到 GLSL ROM 的转换工具
 - 原版资源包运行方式
 
@@ -58,7 +61,9 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 ## 内置程序
 
-内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。随后，M-mode 通过标准 CLINT 地址验证 `msip` 读写，将 `mtime` 置零，并设置 `mtimecmp=12` 触发 machine timer interrupt。机器中断处理程序记录 `mcause=0x80000007`、关闭 MTIE，并置位 STIP。进入 S-mode 后，委托的 supervisor timer interrupt 以 `scause=0x80000005` 到达 supervisor handler。
+内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。随后，M-mode 配置 PLIC source 10 和 16550A THRE interrupt，发送首字节 `U`，并通过 MEIP 进入 machine external interrupt handler。Handler 从 PLIC claim 寄存器取得 source 10，完成中断后返回。程序继续以 polling-style UART 写入 `ART IRQ OK `。
+
+UART/PLIC 路径通过后，M-mode 通过标准 CLINT 地址验证 `msip` 读写，将 `mtime` 置零，并设置 `mtimecmp=12` 触发 machine timer interrupt。机器中断处理程序记录 `mcause=0x80000007`、关闭 MTIE，并置位 STIP。页表为 UART 与 PLIC 建立 supervisor identity mapping；程序启用 PLIC S context 并发送字节 `S`。进入 S-mode 后，SEIP 与 STIP 依次到达 supervisor handler，最终 dashboard 串口行显示 `UART IRQ OK S`。
 
 定时器路径通过后，M-mode 在物理地址 `0xA000` 和 `0xB000` 建立两级 Sv32 页表。页表为物理代码页和显存页分别建立 supervisor 与 user 虚拟别名：
 
@@ -85,7 +90,7 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2706 条指令。三种特权级各自的验证失败路径会将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
+U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2815 条指令。三种特权级各自的验证失败路径会将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
 ## 指令范围
 
@@ -105,9 +110,9 @@ U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`�
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级、LR/SC reservation 和 CLINT 计时状态。
 
-当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括 PLIC 风格的外部中断控制器、UART 和可加载 guest image。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括可加载 guest image、device tree、SBI 服务与启动内存布局。
 
-## CLINT 与中断
+## 平台设备与中断
 
 CLINT 提供以下 32 位 MMIO 寄存器。`mtime` 每执行一条 guest 指令增长一次，两个 32 位半部组成无符号 64 位计数器。
 
@@ -120,6 +125,21 @@ CLINT 提供以下 32 位 MMIO 寄存器。`mtime` 每执行一条 guest 指令�
 | `0x0200bffc` | `mtime` high | machine time 高 32 位 |
 
 中断仲裁综合 `mip`、`mie`、`mideleg` 和 `mstatus` 中的全局使能位。优先级顺序为 MEI、MSI、MTI、SEI、SSI、STI。Trap entry 在 `mcause` 或 `scause` 的最高位置一，并保留被中断指令的 PC。Direct 模式使用对齐后的 `tvec` 基址；vectored 模式使用 `BASE + 4 × cause`。
+
+UART 位于 `0x10000000`，采用 16550A 的 8-byte MMIO register window。当前寄存器语义覆盖 THR、IER、IIR、LCR 与 LSR；LSR 返回 THRE/TEMT，LCR.DLAB 控制 divisor-latch 配置访问。每次 THR 写入会追加到 64-byte transmit ring，dashboard 显示最近 32 字节。
+
+PLIC 使用 QEMU `virt` 风格地址与 UART source 10：
+
+| 地址 | 寄存器 |
+| --- | --- |
+| `0x0c000028` | source 10 priority |
+| `0x0c001000` | pending word 0 |
+| `0x0c002000` | hart 0 M-mode enable word 0 |
+| `0x0c002080` | hart 0 S-mode enable word 0 |
+| `0x0c200000` / `0x0c200004` | M-mode threshold / claim-complete |
+| `0x0c201000` / `0x0c201004` | S-mode threshold / claim-complete |
+
+满足 priority、enable 与 threshold 条件的 M context 置位 MEIP，S context 置位 SEIP。读取 claim 返回 source 10 并锁定该 context，向 claim-complete 写回 source ID 完成本次中断。
 
 ## 纹理机器布局
 
@@ -136,8 +156,9 @@ A = bits 31..24
 
 | 单词索引 | 内容 |
 | --- | --- |
-| `0`–`16315` | RAM，字节地址 `0x00000000`–`0x0000feef` |
-| `16316`–`16347` | CSR、CLINT、特权级与 atomic reservation 状态 |
+| `0`–`16299` | RAM，字节地址 `0x00000000`–`0x0000feaf` |
+| `16300`–`16315` | CLINT、UART 与 PLIC device state |
+| `16316`–`16347` | CSR、特权级与 atomic reservation 状态 |
 | `16348`–`16379` | `x0`–`x31` |
 | `16380` | CPU 状态 |
 | `16381` | 周期计数器 |
@@ -163,7 +184,13 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 
 ## 加载自己的程序
 
-模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。物理 RAM 范围为 `0x00000000`–`0x0000feef`，CLINT 使用上表列出的 MMIO 地址。
+模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。物理 RAM 范围为 `0x00000000`–`0x0000feaf`，平台设备使用上表列出的 MMIO 地址。
+
+仓库内置的小型两遍汇编器支持 demo 使用的 RV32IMA/Zicsr 子集、标签和 `.org`：
+
+```powershell
+python tools/assemble_demo.py programs/framebuffer_demo.S -o framebuffer_demo.bin
+```
 
 转换 binary：
 
@@ -181,7 +208,7 @@ powershell -ExecutionPolicy Bypass -File tools/package.ps1
 
 ## 验证
 
-参考执行测试会重建内置机器码，并执行 RV32IMA、M/S CSR、CLINT machine timer interrupt、supervisor timer delegation、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
+参考执行测试会从汇编源重建内置机器码，并执行 RV32IMA、M/S CSR、UART/PLIC machine 与 supervisor external interrupt、CLINT machine timer interrupt、supervisor timer delegation、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
 
 ```powershell
 python tools/test_demo.py
@@ -190,7 +217,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA M/S/U OK: CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2706 instructions
+RV32IMA M/S/U OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

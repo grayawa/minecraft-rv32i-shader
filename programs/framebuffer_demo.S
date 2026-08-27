@@ -33,7 +33,8 @@ _start:
     bne   x16, x5, self_test_failed
 
     # Validate LR/SC reservation and an atomic read-modify-write operation.
-    addi  x17, x0, 1536
+    addi  x17, x0, 2047
+    addi  x17, x17, 1
     addi  x18, x0, 7
     sw    x18, 0(x17)
     lr.w  x19, (x17)
@@ -52,7 +53,7 @@ _start:
     bne   x25, x23, self_test_failed
 
     # Exercise M-mode ECALL and load-address-misaligned trap entry.
-    addi  x26, x0, 1132
+    addi  x26, x0, machine_trap_handler
     csrrw x0, mtvec, x26
     addi  x27, x0, 0
     ecall
@@ -71,6 +72,68 @@ _start:
     csrrs x29, mtval, x0
     addi  x30, x0, 1
     bne   x29, x30, machine_self_test_failed
+
+    # Route a 16550A transmit event through PLIC source 10 and MEIP.
+    addi  x27, x0, 0
+    lui   x17, 0xc000
+    addi  x17, x17, 40
+    addi  x19, x0, 1
+    sw    x19, 0(x17)
+    lui   x17, 0xc002
+    addi  x19, x0, 1024
+    sw    x19, 0(x17)
+    lui   x17, 0xc200
+    sw    x0, 0(x17)
+
+    lui   x18, 0x10000
+    addi  x19, x0, 2
+    sb    x19, 1(x18)
+    lbu   x20, 5(x18)
+    addi  x21, x0, 0x60
+    bne   x20, x21, machine_self_test_failed
+    lui   x20, 0x1
+    addi  x20, x20, -2048
+    csrrs x0, mie, x20
+    addi  x20, x0, 8
+    csrrs x0, mstatus, x20
+    addi  x19, x0, 85
+    sb    x19, 0(x18)
+    nop
+    nop
+    nop
+    nop
+
+    addi  x28, x0, 1
+    bne   x27, x28, machine_self_test_failed
+    csrrs x29, mcause, x0
+    lui   x30, 0x80000
+    addi  x30, x30, 11
+    bne   x29, x30, machine_self_test_failed
+    sb    x0, 1(x18)
+
+    # Send the remaining UART IRQ OK line with polling-style writes.
+    addi  x19, x0, 65
+    sb    x19, 0(x18)
+    addi  x19, x0, 82
+    sb    x19, 0(x18)
+    addi  x19, x0, 84
+    sb    x19, 0(x18)
+    addi  x19, x0, 32
+    sb    x19, 0(x18)
+    addi  x19, x0, 73
+    sb    x19, 0(x18)
+    addi  x19, x0, 82
+    sb    x19, 0(x18)
+    addi  x19, x0, 81
+    sb    x19, 0(x18)
+    addi  x19, x0, 32
+    sb    x19, 0(x18)
+    addi  x19, x0, 79
+    sb    x19, 0(x18)
+    addi  x19, x0, 75
+    sb    x19, 0(x18)
+    addi  x19, x0, 32
+    sb    x19, 0(x18)
 
     # Validate CLINT software state and deliver a machine timer interrupt.
     addi  x27, x0, 0
@@ -125,6 +188,14 @@ _start:
     addi  x19, x0, 0x4d7
     sw    x19, 12(x18)
 
+    # Identity-map the PLIC and UART 4 MiB regions for S-mode firmware.
+    lui   x19, 0x3000
+    addi  x19, x19, 0xc7
+    sw    x19, 192(x17)
+    lui   x19, 0x4000
+    addi  x19, x19, 0xc7
+    sw    x19, 256(x17)
+
     lui   x26, 0x80000
     addi  x26, x26, 10
     csrrw x0, satp, x26
@@ -148,16 +219,30 @@ _start:
 
     # Configure supervisor exception and timer-interrupt delegation.
     lui   x26, 0x40000
-    addi  x26, x26, 1184
+    addi  x26, x26, supervisor_trap_handler
     csrrw x0, stvec, x26
     lui   x26, 0xb
     addi  x26, x26, 0x3f7
     csrrw x0, medeleg, x26
-    addi  x20, x0, 32
-    csrrs x0, mie, x20
+    # Arm a delegated supervisor external interrupt alongside STIP.
+    lui   x17, 0xc002
+    addi  x17, x17, 128
+    addi  x19, x0, 1024
+    sw    x0, -128(x17)
+    sw    x19, 0(x17)
+    lui   x17, 0xc201
+    sw    x0, 0(x17)
+    lui   x18, 0x10000
+    addi  x19, x0, 2
+    sb    x19, 1(x18)
+    addi  x19, x0, 83
+    sb    x19, 0(x18)
+
+    addi  x20, x0, 0x220
     csrrw x0, mideleg, x20
+    csrrs x0, mie, x20
     lui   x26, 0x40000
-    addi  x26, x26, 556
+    addi  x26, x26, supervisor_test
     csrrw x0, mepc, x26
     lui   x26, 0x1
     addi  x26, x26, -2046
@@ -165,8 +250,8 @@ _start:
     mret
 
 supervisor_test:
-    # Firmware has converted the machine timer event into supervisor STIP.
-    addi  x28, x0, 2
+    # Firmware has received delegated SEIP and the converted timer STIP.
+    addi  x28, x0, 3
     bne   x27, x28, supervisor_self_test_failed
     csrrs x29, scause, x0
     lui   x30, 0x80000
@@ -242,7 +327,7 @@ supervisor_test:
     bne   x29, x30, supervisor_self_test_failed
 
     lui   x26, 0x40000
-    addi  x26, x26, 844
+    addi  x26, x26, fetch_resume
     csrrw x0, sscratch, x26
     lui   x26, 0x50000
     jalr  x0, 0(x26)
@@ -272,7 +357,7 @@ fetch_resume:
 
     # MXR grants load access to the execute-only user code alias.
     lui   x26, 0x40002
-    addi  x26, x26, 992
+    addi  x26, x26, user_test+4
     lw    x20, 0(x26)
     addi  x28, x0, 10
     bne   x27, x28, supervisor_self_test_failed
@@ -287,7 +372,7 @@ fetch_resume:
 
     # SRET enters the execute-only user alias at 0x400023dc.
     lui   x26, 0x40002
-    addi  x26, x26, 988
+    addi  x26, x26, user_test
     csrrw x0, sepc, x26
     sret
 
@@ -342,7 +427,7 @@ user_self_test_failed:
     sw    x2, 0(x1)
     ebreak
 
-    .org 1132
+    .org 1536
 machine_trap_handler:
     csrrs x30, mcause, x0
     blt   x30, x0, machine_interrupt
@@ -353,6 +438,18 @@ machine_trap_handler:
     mret
 
 machine_interrupt:
+    lui   x31, 0x80000
+    addi  x31, x31, 11
+    bne   x30, x31, machine_timer_interrupt
+    addi  x27, x27, 1
+    lui   x31, 0xc200
+    lw    x29, 4(x31)
+    addi  x28, x0, 10
+    bne   x29, x28, machine_self_test_failed
+    sw    x29, 4(x31)
+    mret
+
+machine_timer_interrupt:
     addi  x27, x27, 1
     addi  x31, x0, 128
     csrrc x0, mie, x31
@@ -360,7 +457,7 @@ machine_interrupt:
     csrrs x0, mip, x31
     mret
 
-    .org 1184
+    .org 1640
 supervisor_trap_handler:
     csrrs x30, scause, x0
     blt   x30, x0, supervisor_interrupt
@@ -378,6 +475,20 @@ supervisor_normal_return:
     sret
 
 supervisor_interrupt:
+    lui   x31, 0x80000
+    addi  x31, x31, 9
+    bne   x30, x31, supervisor_timer_interrupt
+    addi  x27, x27, 1
+    lui   x31, 0xc201
+    lw    x29, 4(x31)
+    addi  x28, x0, 10
+    bne   x29, x28, supervisor_self_test_failed
+    sw    x29, 4(x31)
+    lui   x31, 0x10000
+    sb    x0, 1(x31)
+    sret
+
+supervisor_timer_interrupt:
     addi  x27, x27, 1
     addi  x31, x0, 32
     csrrc x0, sip, x31

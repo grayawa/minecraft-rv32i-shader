@@ -1,6 +1,6 @@
 {
   "pack": {
-    "description": "Minecraft RV32IMA Sv32 + CLINT — pure postprocess RISC-V emulator",
+    "description": "Minecraft RV32IMA Sv32 + CLINT/UART/PLIC — pure shader emulator",
     "min_format": [93, 0],
     "max_format": [93, 0]
   }

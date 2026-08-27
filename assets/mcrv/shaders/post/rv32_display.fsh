@@ -20,6 +20,9 @@ const uint STATUS_INDEX = 16380u;
 const uint CYCLE_INDEX = 16381u;
 const uint PC_INDEX = 16382u;
 const uint FRAMEBUFFER_BASE = 1024u;
+const uint UART_TX_HEAD_INDEX = 16307u;
+const uint UART_TX_BUFFER_ADDRESS = 0x00001900u;
+const uint UART_TX_BUFFER_BYTES = 64u;
 const ivec2 FRAMEBUFFER_SIZE = ivec2(32, 18);
 
 ivec2 wordCoordinate(uint index) {
@@ -33,6 +36,10 @@ uint decodeWord(vec4 encoded) {
 
 uint readWord(uint index) {
     return decodeWord(texelFetch(StateSampler, wordCoordinate(index), 0));
+}
+
+uint readByte(uint address) {
+    return (readWord(address >> 2u) >> ((address & 3u) * 8u)) & 0xffu;
 }
 
 uint glyphBits(int code) {
@@ -54,11 +61,15 @@ uint glyphBits(int code) {
         case 69: return 0xF88E8Fu; // E
         case 70: return 0x888E8Fu; // F
         case 73: return 0xF2222Fu; // I
+        case 75: return 0x99ACA9u; // K
         case 77: return 0x999FF9u; // M
+        case 79: return 0x699996u; // O
         case 80: return 0x888E9Eu; // P
+        case 81: return 0x7B9996u; // Q
         case 82: return 0x99AE9Eu; // R
         case 83: return 0xE11687u; // S
         case 84: return 0x22222Fu; // T
+        case 85: return 0x699999u; // U
         case 86: return 0x669999u; // V
         case 88: return 0x996699u; // X
         case 89: return 0x222699u; // Y
@@ -140,6 +151,8 @@ void main() {
     // Virtual dashboard coordinates use a top-left origin and a 320x180 canvas.
     vec2 p = vec2(localPixel.x, dashboardSize.y - localPixel.y) / scale;
     vec3 colour = scene * vec3(0.035, 0.055, 0.075) + vec3(0.006, 0.010, 0.016);
+    vec3 textColour = vec3(0.30, 0.96, 1.00);
+    vec3 valueColour = vec3(0.72, 0.84, 0.92);
 
     float border = min(min(p.x, 320.0 - p.x), min(p.y, 180.0 - p.y));
     colour += vec3(0.02, 0.16, 0.20) * (1.0 - smoothstep(0.0, 2.0, border));
@@ -162,11 +175,37 @@ void main() {
         colour = pixelColour;
     }
 
+    // The UART line shows the newest 32 bytes from the transmit ring.
+    vec2 uartPanelOrigin = vec2(116.0, 135.0);
+    vec2 uartPanelPixel = p - uartPanelOrigin;
+    if (uartPanelPixel.x >= 0.0 && uartPanelPixel.x < 192.0
+            && uartPanelPixel.y >= 0.0 && uartPanelPixel.y < 10.0) {
+        colour = mix(colour, vec3(0.008, 0.025, 0.034), 0.88);
+    }
+    float uartLabelInk = 0.0;
+    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(118.0, 137.0), 84, 1.0));
+    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(123.0, 137.0), 88, 1.0));
+    colour = mix(colour, textColour * 0.88, uartLabelInk);
+
+    uint uartHead = readWord(UART_TX_HEAD_INDEX);
+    uint uartCount = min(uartHead, 32u);
+    uint uartStart = uartHead - uartCount;
+    float uartInk = 0.0;
+    for (int index = 0; index < 32; ++index) {
+        if (uint(index) < uartCount) {
+            uint bufferOffset = (uartStart + uint(index)) % UART_TX_BUFFER_BYTES;
+            int code = int(readByte(UART_TX_BUFFER_ADDRESS + bufferOffset));
+            uartInk = max(uartInk, glyphPixel(p,
+                vec2(133.0 + float(index) * 5.0, 137.0), code, 1.0));
+        }
+    }
+    colour = mix(colour, valueColour, uartInk);
+
     // A compact memory activity strip visualizes the first 384 RAM words.
-    vec2 memoryOrigin = vec2(116.0, 143.0);
+    vec2 memoryOrigin = vec2(116.0, 149.0);
     vec2 memoryPixel = p - memoryOrigin;
     if (memoryPixel.x >= 0.0 && memoryPixel.x < 192.0
-            && memoryPixel.y >= 0.0 && memoryPixel.y < 24.0) {
+            && memoryPixel.y >= 0.0 && memoryPixel.y < 18.0) {
         ivec2 cell = ivec2(floor(memoryPixel / 3.0));
         uint index = uint(cell.y * 64 + cell.x);
         uint value = readWord(index);
@@ -178,8 +217,6 @@ void main() {
         colour = mix(vec3(0.012, 0.020, 0.030), heat + vec3(0.02, 0.04, 0.05), 0.86);
     }
 
-    vec3 textColour = vec3(0.30, 0.96, 1.00);
-    vec3 valueColour = vec3(0.72, 0.84, 0.92);
     float titleInk = drawTitle(p, vec2(10.0, 9.0), 2.0);
     colour = mix(colour, textColour, titleInk);
 
