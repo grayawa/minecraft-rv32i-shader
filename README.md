@@ -1,6 +1,6 @@
 # Minecraft RV32IMA Shader
 
-一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、同步异常 delegation 和 trap 返回路径。
+一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、CLINT、异常与中断 delegation，以及 trap 返回路径。
 
 CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
@@ -12,7 +12,10 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - Zicsr 的六种 CSR 读写指令
 - M-mode 与 S-mode CSR bank
 - `ECALL` 与内存/指令异常的同步 trap entry
-- `medeleg` delegation、`MRET` 与 `SRET`
+- `medeleg`/`mideleg` delegation、`MRET` 与 `SRET`
+- CLINT `msip`、64 位 `mtimecmp` 与 64 位 `mtime`
+- machine software/timer 与 supervisor software/timer/external interrupt arbitration
+- `mtvec`/`stvec` direct 和 vectored trap 地址计算
 - Sv32 两级页表遍历、4 KiB 页面与 4 MiB superpage
 - R/W/X/U/A/D、`SUM`、`MXR` 权限检查
 - `MPRV` 数据访问有效特权级
@@ -25,7 +28,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - 32 × 18 单词显存，基地址为 `0x00001000`
 - 约 120 指令/秒的 60 FPS 默认执行速度
 - PC、周期、状态、`x1`–`x8`、显存与 RAM 活动仪表盘
-- 内置 RV32IMA、CSR、trap 自检与显存填充程序
+- 内置 RV32IMA、CSR、CLINT、interrupt、trap 自检与显存填充程序
 - 平面 RV32 binary 到 GLSL ROM 的转换工具
 - 原版资源包运行方式
 
@@ -55,7 +58,9 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 
 ## 内置程序
 
-内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。M-mode 随后在物理地址 `0xA000` 和 `0xB000` 建立两级 Sv32 页表。页表为物理代码页和显存页分别建立 supervisor 与 user 虚拟别名：
+内置程序首先验证八条 RV32M 指令、CSR、LR/SC reservation 和 `AMOADD.W`。随后，M-mode 通过标准 CLINT 地址验证 `msip` 读写，将 `mtime` 置零，并设置 `mtimecmp=12` 触发 machine timer interrupt。机器中断处理程序记录 `mcause=0x80000007`、关闭 MTIE，并置位 STIP。进入 S-mode 后，委托的 supervisor timer interrupt 以 `scause=0x80000005` 到达 supervisor handler。
+
+定时器路径通过后，M-mode 在物理地址 `0xA000` 和 `0xB000` 建立两级 Sv32 页表。页表为物理代码页和显存页分别建立 supervisor 与 user 虚拟别名：
 
 | 虚拟页 | 物理页 | 权限 | 用途 |
 | --- | --- | --- | --- |
@@ -80,7 +85,7 @@ bltu  x1, x6, fill_framebuffer
 ebreak
 ```
 
-U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2632 条指令。三种特权级各自的验证失败路径会将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
+U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`–`0x18ff` 写入 `1`–`576`，完成 576 个显存单元后以 EBREAK 结束。整个过程执行 2706 条指令。三种特权级各自的验证失败路径会将 `0xDEADBEEF` 写入首个显存单元并进入 EBREAK。
 
 ## 指令范围
 
@@ -98,9 +103,23 @@ U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`�
 | CSR | `CSRRW`, `CSRRS`, `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI` |
 | Environment | `FENCE`, `FENCE.I`, `ECALL`, `EBREAK`, `MRET`, `SRET`, `SFENCE.VMA` |
 
-CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级与 LR/SC reservation。
+CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级、LR/SC reservation 和 CLINT 计时状态。
 
-当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，以及异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15` 的 trap entry。Linux 启动路径的下一层包括 CLINT、timer interrupt、外部中断和 UART。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括 PLIC 风格的外部中断控制器、UART 和可加载 guest image。
+
+## CLINT 与中断
+
+CLINT 提供以下 32 位 MMIO 寄存器。`mtime` 每执行一条 guest 指令增长一次，两个 32 位半部组成无符号 64 位计数器。
+
+| 地址 | 寄存器 | 语义 |
+| --- | --- | --- |
+| `0x02000000` | `msip` | bit 0 产生 machine software interrupt |
+| `0x02004000` | `mtimecmp` low | machine timer compare 低 32 位 |
+| `0x02004004` | `mtimecmp` high | machine timer compare 高 32 位 |
+| `0x0200bff8` | `mtime` low | machine time 低 32 位 |
+| `0x0200bffc` | `mtime` high | machine time 高 32 位 |
+
+中断仲裁综合 `mip`、`mie`、`mideleg` 和 `mstatus` 中的全局使能位。优先级顺序为 MEI、MSI、MTI、SEI、SSI、STI。Trap entry 在 `mcause` 或 `scause` 的最高位置一，并保留被中断指令的 PC。Direct 模式使用对齐后的 `tvec` 基址；vectored 模式使用 `BASE + 4 × cause`。
 
 ## 纹理机器布局
 
@@ -118,7 +137,7 @@ A = bits 31..24
 | 单词索引 | 内容 |
 | --- | --- |
 | `0`–`16315` | RAM，字节地址 `0x00000000`–`0x0000feef` |
-| `16316`–`16347` | CSR、特权级与 atomic reservation 状态 |
+| `16316`–`16347` | CSR、CLINT、特权级与 atomic reservation 状态 |
 | `16348`–`16379` | `x0`–`x31` |
 | `16380` | CPU 状态 |
 | `16381` | 周期计数器 |
@@ -140,11 +159,11 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 | `0` | Running |
 | `1` | EBREAK |
 
-同步异常通过 M/S trap handler 继续执行，U-mode 委托异常进入 S-mode。原因和附加值分别保存在 `mcause`/`mtval` 或 `scause`/`stval`。仪表盘指示灯以绿色表示运行、金色表示 EBREAK。
+异常与中断通过 M/S trap handler 继续执行，委托事件进入 S-mode。原因和附加值分别保存在 `mcause`/`mtval` 或 `scause`/`stval`。仪表盘指示灯以绿色表示运行、金色表示 EBREAK。
 
 ## 加载自己的程序
 
-模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。物理 RAM 范围为 `0x00000000`–`0x0000feef`。
+模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。物理 RAM 范围为 `0x00000000`–`0x0000feef`，CLINT 使用上表列出的 MMIO 地址。
 
 转换 binary：
 
@@ -162,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File tools/package.ps1
 
 ## 验证
 
-参考执行测试会重建内置机器码，并执行 RV32IMA、M/S CSR、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
+参考执行测试会重建内置机器码，并执行 RV32IMA、M/S CSR、CLINT machine timer interrupt、supervisor timer delegation、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
 
 ```powershell
 python tools/test_demo.py
@@ -171,7 +190,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA M/S/U OK: Sv32, MPRV, SUM/MXR, 12 delegated traps, 2632 instructions
+RV32IMA M/S/U OK: CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2706 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

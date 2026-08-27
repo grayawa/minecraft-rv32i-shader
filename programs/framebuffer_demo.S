@@ -52,7 +52,7 @@ _start:
     bne   x25, x23, self_test_failed
 
     # Exercise M-mode ECALL and load-address-misaligned trap entry.
-    addi  x26, x0, 964
+    addi  x26, x0, 1132
     csrrw x0, mtvec, x26
     addi  x27, x0, 0
     ecall
@@ -70,6 +70,43 @@ _start:
     bne   x29, x30, machine_self_test_failed
     csrrs x29, mtval, x0
     addi  x30, x0, 1
+    bne   x29, x30, machine_self_test_failed
+
+    # Validate CLINT software state and deliver a machine timer interrupt.
+    addi  x27, x0, 0
+    lui   x17, 0x2000
+    addi  x19, x0, 1
+    sw    x19, 0(x17)
+    lw    x20, 0(x17)
+    bne   x20, x19, machine_self_test_failed
+    sw    x0, 0(x17)
+
+    lui   x17, 0x2004
+    lui   x18, 0x200c
+    addi  x18, x18, -8
+    sw    x0, 0(x18)
+    sw    x0, 4(x18)
+    sw    x0, 4(x17)
+    addi  x19, x0, 12
+    sw    x19, 0(x17)
+    addi  x20, x0, 128
+    csrrs x0, mie, x20
+    addi  x20, x0, 8
+    csrrs x0, mstatus, x20
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+
+    addi  x28, x0, 1
+    bne   x27, x28, machine_self_test_failed
+    csrrs x29, mcause, x0
+    lui   x30, 0x80000
+    addi  x30, x30, 7
     bne   x29, x30, machine_self_test_failed
 
     # Build an Sv32 root table at 0xa000 and a level-zero table at 0xb000.
@@ -109,22 +146,33 @@ _start:
     lw    x24, 0(x17)
     bne   x24, x23, machine_self_test_failed
 
-    # Configure the virtual supervisor trap vector and delegation mask.
+    # Configure supervisor exception and timer-interrupt delegation.
     lui   x26, 0x40000
-    addi  x26, x26, 984
+    addi  x26, x26, 1184
     csrrw x0, stvec, x26
     lui   x26, 0xb
     addi  x26, x26, 0x3f7
     csrrw x0, medeleg, x26
+    addi  x20, x0, 32
+    csrrs x0, mie, x20
+    csrrw x0, mideleg, x20
     lui   x26, 0x40000
-    addi  x26, x26, 412
+    addi  x26, x26, 556
     csrrw x0, mepc, x26
     lui   x26, 0x1
-    addi  x26, x26, -2048
+    addi  x26, x26, -2046
     csrrw x0, mstatus, x26
     mret
 
 supervisor_test:
+    # Firmware has converted the machine timer event into supervisor STIP.
+    addi  x28, x0, 2
+    bne   x27, x28, supervisor_self_test_failed
+    csrrs x29, scause, x0
+    lui   x30, 0x80000
+    addi  x30, x30, 5
+    bne   x29, x30, supervisor_self_test_failed
+
     addi  x27, x0, 0
     ecall
     addi  x28, x0, 1
@@ -194,7 +242,7 @@ supervisor_test:
     bne   x29, x30, supervisor_self_test_failed
 
     lui   x26, 0x40000
-    addi  x26, x26, 676
+    addi  x26, x26, 844
     csrrw x0, sscratch, x26
     lui   x26, 0x50000
     jalr  x0, 0(x26)
@@ -224,7 +272,7 @@ fetch_resume:
 
     # MXR grants load access to the execute-only user code alias.
     lui   x26, 0x40002
-    addi  x26, x26, 824
+    addi  x26, x26, 992
     lw    x20, 0(x26)
     addi  x28, x0, 10
     bne   x27, x28, supervisor_self_test_failed
@@ -237,9 +285,9 @@ fetch_resume:
     addi  x23, x0, 0x73
     bne   x20, x23, supervisor_self_test_failed
 
-    # SRET enters the execute-only user alias at 0x40002334.
+    # SRET enters the execute-only user alias at 0x400023dc.
     lui   x26, 0x40002
-    addi  x26, x26, 820
+    addi  x26, x26, 988
     csrrw x0, sepc, x26
     sret
 
@@ -272,6 +320,7 @@ fill_framebuffer:
     bltu  x1, x6, fill_framebuffer
     ebreak
 
+self_test_failed:
 machine_self_test_failed:
     lui   x1, 0x1
     lui   x2, 0xdeadc
@@ -293,18 +342,29 @@ user_self_test_failed:
     sw    x2, 0(x1)
     ebreak
 
-    .org 964
+    .org 1132
 machine_trap_handler:
+    csrrs x30, mcause, x0
+    blt   x30, x0, machine_interrupt
     addi  x27, x27, 1
     csrrs x31, mepc, x0
     addi  x31, x31, 4
     csrrw x0, mepc, x31
     mret
 
-    .org 984
-supervisor_trap_handler:
+machine_interrupt:
     addi  x27, x27, 1
+    addi  x31, x0, 128
+    csrrc x0, mie, x31
+    addi  x31, x0, 32
+    csrrs x0, mip, x31
+    mret
+
+    .org 1184
+supervisor_trap_handler:
     csrrs x30, scause, x0
+    blt   x30, x0, supervisor_interrupt
+    addi  x27, x27, 1
     addi  x31, x0, 12
     bne   x30, x31, supervisor_normal_return
     csrrs x31, sscratch, x0
@@ -315,4 +375,10 @@ supervisor_normal_return:
     csrrs x31, sepc, x0
     addi  x31, x31, 4
     csrrw x0, sepc, x31
+    sret
+
+supervisor_interrupt:
+    addi  x27, x27, 1
+    addi  x31, x0, 32
+    csrrc x0, sip, x31
     sret

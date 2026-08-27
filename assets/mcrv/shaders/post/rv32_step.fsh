@@ -25,6 +25,12 @@ const uint RAM_WORDS = CSR_BASE;
 const uint RAM_BYTES = RAM_WORDS * 4u;
 const uint INVALID_INDEX = 0xffffffffu;
 
+const uint CLINT_MSIP_ADDRESS = 0x02000000u;
+const uint CLINT_MTIMECMP_LOW_ADDRESS = 0x02004000u;
+const uint CLINT_MTIMECMP_HIGH_ADDRESS = 0x02004004u;
+const uint CLINT_MTIME_LOW_ADDRESS = 0x0200bff8u;
+const uint CLINT_MTIME_HIGH_ADDRESS = 0x0200bffcu;
+
 const uint CSR_MSTATUS = 0x300u;
 const uint CSR_MISA = 0x301u;
 const uint CSR_MEDELEG = 0x302u;
@@ -50,6 +56,11 @@ const uint CSR_SEPC = 0x141u;
 const uint CSR_SCAUSE = 0x142u;
 const uint CSR_STVAL = 0x143u;
 const uint CSR_SIP = 0x144u;
+const uint CLINT_MSIP_INDEX = CSR_BASE + 16u;
+const uint CLINT_MTIMECMP_LOW_INDEX = CSR_BASE + 17u;
+const uint CLINT_MTIMECMP_HIGH_INDEX = CSR_BASE + 18u;
+const uint CLINT_MTIME_LOW_INDEX = CSR_BASE + 19u;
+const uint CLINT_MTIME_HIGH_INDEX = CSR_BASE + 20u;
 const uint PRIVILEGE_INDEX = CSR_BASE + 28u;
 const uint RESERVATION_ADDRESS_INDEX = CSR_BASE + 29u;
 const uint RESERVATION_VALID_INDEX = CSR_BASE + 30u;
@@ -97,6 +108,26 @@ uint readRegister(uint index) {
 
 uint readMemoryWord(uint address) {
     return readStateWord(address >> 2u);
+}
+
+uint clintStateIndex(uint address) {
+    if (address == CLINT_MSIP_ADDRESS) return CLINT_MSIP_INDEX;
+    if (address == CLINT_MTIMECMP_LOW_ADDRESS) return CLINT_MTIMECMP_LOW_INDEX;
+    if (address == CLINT_MTIMECMP_HIGH_ADDRESS) return CLINT_MTIMECMP_HIGH_INDEX;
+    if (address == CLINT_MTIME_LOW_ADDRESS) return CLINT_MTIME_LOW_INDEX;
+    if (address == CLINT_MTIME_HIGH_ADDRESS) return CLINT_MTIME_HIGH_INDEX;
+    return INVALID_INDEX;
+}
+
+bool physicalAccessValid(uint address, uint width) {
+    if (width > 0u && address <= RAM_BYTES - width) return true;
+    return width == 4u && clintStateIndex(address) != INVALID_INDEX;
+}
+
+uint readPhysicalWord(uint address) {
+    uint clintIndex = clintStateIndex(address);
+    return clintIndex == INVALID_INDEX
+        ? readMemoryWord(address) : readStateWord(clintIndex);
 }
 
 uint signExtend(uint value, uint bits) {
@@ -163,7 +194,9 @@ bool csrWritable(uint address) {
 
 uint csrWriteMask(uint address) {
     if (address == CSR_SSTATUS) return 0x000de162u;
-    if (address == CSR_SIE || address == CSR_SIP) return 0x00000222u;
+    if (address == CSR_SIE || address == CSR_SIP || address == CSR_MIP) {
+        return 0x00000222u;
+    }
     return 0xffffffffu;
 }
 
@@ -181,6 +214,19 @@ uint readCSR(uint address) {
     if (address == CSR_MHARTID) return 0u;
     uint index = csrStateIndex(address);
     uint value = index == INVALID_INDEX ? 0u : readStateWord(index);
+    if (address == CSR_MIP || address == CSR_SIP) {
+        uint machinePending = value & ~0x88u;
+        if (readStateWord(CLINT_MSIP_INDEX) != 0u) machinePending |= 0x8u;
+        uint timeLow = readStateWord(CLINT_MTIME_LOW_INDEX);
+        uint timeHigh = readStateWord(CLINT_MTIME_HIGH_INDEX);
+        uint compareLow = readStateWord(CLINT_MTIMECMP_LOW_INDEX);
+        uint compareHigh = readStateWord(CLINT_MTIMECMP_HIGH_INDEX);
+        if (timeHigh > compareHigh
+                || (timeHigh == compareHigh && timeLow >= compareLow)) {
+            machinePending |= 0x80u;
+        }
+        value = machinePending;
+    }
     if (address == CSR_SSTATUS) return value & 0x000de162u;
     if (address == CSR_SIE || address == CSR_SIP) return value & 0x00000222u;
     return value;
@@ -259,9 +305,19 @@ bool translateAddress(uint virtualAddress, uint accessType, uint privilege,
     return true;
 }
 
+uint selectInterruptCause(uint pending) {
+    if ((pending & (1u << 11u)) != 0u) return 11u;
+    if ((pending & (1u << 3u)) != 0u) return 3u;
+    if ((pending & (1u << 7u)) != 0u) return 7u;
+    if ((pending & (1u << 9u)) != 0u) return 9u;
+    if ((pending & (1u << 1u)) != 0u) return 1u;
+    if ((pending & (1u << 5u)) != 0u) return 5u;
+    return INVALID_INDEX;
+}
+
 uint initialProgramWord(uint index) {
-    // The bundled program validates RV32IMA, Sv32, MPRV, SUM/MXR, and
-    // M/S/U trap transitions before U-mode fills the framebuffer.
+    // The bundled program validates RV32IMA, Sv32, CLINT timer delivery,
+    // and M/S/U interrupt and exception transitions before U-mode draws.
     if (index == 0u) return 0x01500193u;
     if (index == 1u) return 0x00600213u;
     if (index == 2u) return 0x024182b3u;
@@ -273,19 +329,19 @@ uint initialProgramWord(uint index) {
     if (index == 8u) return 0x0241e5b3u;
     if (index == 9u) return 0x0241f633u;
     if (index == 10u) return 0x07e00693u;
-    if (index == 11u) return 0x34d29e63u;
-    if (index == 12u) return 0x34031c63u;
-    if (index == 13u) return 0x34039a63u;
-    if (index == 14u) return 0x34041863u;
+    if (index == 11u) return 0x40d29263u;
+    if (index == 12u) return 0x40031063u;
+    if (index == 13u) return 0x3e039e63u;
+    if (index == 14u) return 0x3e041c63u;
     if (index == 15u) return 0x00300713u;
-    if (index == 16u) return 0x34e49463u;
-    if (index == 17u) return 0x34e51263u;
-    if (index == 18u) return 0x34e59063u;
-    if (index == 19u) return 0x32e61e63u;
+    if (index == 16u) return 0x3ee49863u;
+    if (index == 17u) return 0x3ee51663u;
+    if (index == 18u) return 0x3ee59463u;
+    if (index == 19u) return 0x3ee61263u;
     if (index == 20u) return 0x340297f3u;
     if (index == 21u) return 0x34002873u;
-    if (index == 22u) return 0x32079863u;
-    if (index == 23u) return 0x32581663u;
+    if (index == 22u) return 0x3c079c63u;
+    if (index == 23u) return 0x3c581a63u;
     if (index == 24u) return 0x60000893u;
     if (index == 25u) return 0x00700913u;
     if (index == 26u) return 0x0128a023u;
@@ -294,240 +350,296 @@ uint initialProgramWord(uint index) {
     if (index == 29u) return 0x1948aaafu;
     if (index == 30u) return 0x0008ab03u;
     if (index == 31u) return 0x00700b93u;
-    if (index == 32u) return 0x31799463u;
-    if (index == 33u) return 0x300a9263u;
+    if (index == 32u) return 0x3b799863u;
+    if (index == 33u) return 0x3a0a9663u;
     if (index == 34u) return 0x00900b93u;
-    if (index == 35u) return 0x2f7b1e63u;
+    if (index == 35u) return 0x3b7b1263u;
     if (index == 36u) return 0x0128ac2fu;
     if (index == 37u) return 0x0008ac83u;
-    if (index == 38u) return 0x2f7c1863u;
+    if (index == 38u) return 0x397c1c63u;
     if (index == 39u) return 0x01000b93u;
-    if (index == 40u) return 0x2f7c9463u;
-    if (index == 41u) return 0x3c400d13u;
+    if (index == 40u) return 0x397c9863u;
+    if (index == 41u) return 0x46c00d13u;
     if (index == 42u) return 0x305d1073u;
     if (index == 43u) return 0x00000d93u;
     if (index == 44u) return 0x00000073u;
     if (index == 45u) return 0x00100e13u;
-    if (index == 46u) return 0x2dcd9863u;
+    if (index == 46u) return 0x37cd9c63u;
     if (index == 47u) return 0x34202ef3u;
     if (index == 48u) return 0x00b00f13u;
-    if (index == 49u) return 0x2dee9263u;
+    if (index == 49u) return 0x37ee9663u;
     if (index == 50u) return 0x00102003u;
     if (index == 51u) return 0x00200e13u;
-    if (index == 52u) return 0x2bcd9c63u;
+    if (index == 52u) return 0x37cd9063u;
     if (index == 53u) return 0x34202ef3u;
     if (index == 54u) return 0x00400f13u;
-    if (index == 55u) return 0x2bee9663u;
+    if (index == 55u) return 0x35ee9a63u;
     if (index == 56u) return 0x34302ef3u;
     if (index == 57u) return 0x00100f13u;
-    if (index == 58u) return 0x2bee9063u;
-    if (index == 59u) return 0x0000a8b7u;
-    if (index == 60u) return 0x0000b937u;
-    if (index == 61u) return 0x000039b7u;
-    if (index == 62u) return 0xc0198993u;
-    if (index == 63u) return 0x4138a023u;
-    if (index == 64u) return 0x04b00993u;
-    if (index == 65u) return 0x01392023u;
-    if (index == 66u) return 0x4c700993u;
-    if (index == 67u) return 0x01392223u;
-    if (index == 68u) return 0x05900993u;
-    if (index == 69u) return 0x01392423u;
-    if (index == 70u) return 0x4d700993u;
-    if (index == 71u) return 0x01392623u;
-    if (index == 72u) return 0x80000d37u;
-    if (index == 73u) return 0x00ad0d13u;
-    if (index == 74u) return 0x180d1073u;
-    if (index == 75u) return 0x12000073u;
-    if (index == 76u) return 0x000018b7u;
-    if (index == 77u) return 0x02a00a13u;
-    if (index == 78u) return 0x0148a023u;
-    if (index == 79u) return 0x40001ab7u;
-    if (index == 80u) return 0x00021d37u;
-    if (index == 81u) return 0x800d0d13u;
-    if (index == 82u) return 0x300d1073u;
-    if (index == 83u) return 0x000aab03u;
-    if (index == 84u) return 0x234b1c63u;
-    if (index == 85u) return 0x02b00b93u;
-    if (index == 86u) return 0x017aa023u;
-    if (index == 87u) return 0x30001073u;
-    if (index == 88u) return 0x0008ac03u;
-    if (index == 89u) return 0x237c1263u;
-    if (index == 90u) return 0x40000d37u;
-    if (index == 91u) return 0x3d8d0d13u;
-    if (index == 92u) return 0x105d1073u;
-    if (index == 93u) return 0x0000bd37u;
-    if (index == 94u) return 0x3f7d0d13u;
-    if (index == 95u) return 0x302d1073u;
-    if (index == 96u) return 0x40000d37u;
-    if (index == 97u) return 0x19cd0d13u;
-    if (index == 98u) return 0x341d1073u;
-    if (index == 99u) return 0x00001d37u;
-    if (index == 100u) return 0x800d0d13u;
-    if (index == 101u) return 0x300d1073u;
-    if (index == 102u) return 0x30200073u;
-    if (index == 103u) return 0x00000d93u;
-    if (index == 104u) return 0x00000073u;
-    if (index == 105u) return 0x00100e13u;
-    if (index == 106u) return 0x1fcd9a63u;
-    if (index == 107u) return 0x14202ef3u;
-    if (index == 108u) return 0x00900f13u;
-    if (index == 109u) return 0x1fee9463u;
-    if (index == 110u) return 0xffffffffu;
-    if (index == 111u) return 0x00200e13u;
-    if (index == 112u) return 0x1dcd9e63u;
-    if (index == 113u) return 0x14202ef3u;
-    if (index == 114u) return 0x00200f13u;
-    if (index == 115u) return 0x1dee9863u;
-    if (index == 116u) return 0x14302ef3u;
-    if (index == 117u) return 0xfff00f13u;
-    if (index == 118u) return 0x1dee9263u;
-    if (index == 119u) return 0x00102003u;
-    if (index == 120u) return 0x00300e13u;
-    if (index == 121u) return 0x1bcd9c63u;
-    if (index == 122u) return 0x14202ef3u;
-    if (index == 123u) return 0x00400f13u;
-    if (index == 124u) return 0x1bee9663u;
-    if (index == 125u) return 0x14302ef3u;
-    if (index == 126u) return 0x00100f13u;
-    if (index == 127u) return 0x1bee9063u;
-    if (index == 128u) return 0x00002123u;
-    if (index == 129u) return 0x00400e13u;
-    if (index == 130u) return 0x19cd9a63u;
-    if (index == 131u) return 0x14202ef3u;
-    if (index == 132u) return 0x00600f13u;
-    if (index == 133u) return 0x19ee9463u;
-    if (index == 134u) return 0x14302ef3u;
-    if (index == 135u) return 0x00200f13u;
-    if (index == 136u) return 0x17ee9e63u;
-    if (index == 137u) return 0x50000d37u;
-    if (index == 138u) return 0x000d2003u;
-    if (index == 139u) return 0x00500e13u;
-    if (index == 140u) return 0x17cd9663u;
+    if (index == 58u) return 0x35ee9463u;
+    if (index == 59u) return 0x00000d93u;
+    if (index == 60u) return 0x020008b7u;
+    if (index == 61u) return 0x00100993u;
+    if (index == 62u) return 0x0138a023u;
+    if (index == 63u) return 0x0008aa03u;
+    if (index == 64u) return 0x333a1863u;
+    if (index == 65u) return 0x0008a023u;
+    if (index == 66u) return 0x020048b7u;
+    if (index == 67u) return 0x0200c937u;
+    if (index == 68u) return 0xff890913u;
+    if (index == 69u) return 0x00092023u;
+    if (index == 70u) return 0x00092223u;
+    if (index == 71u) return 0x0008a223u;
+    if (index == 72u) return 0x00c00993u;
+    if (index == 73u) return 0x0138a023u;
+    if (index == 74u) return 0x08000a13u;
+    if (index == 75u) return 0x304a2073u;
+    if (index == 76u) return 0x00800a13u;
+    if (index == 77u) return 0x300a2073u;
+    if (index == 78u) return 0x00000013u;
+    if (index == 79u) return 0x00000013u;
+    if (index == 80u) return 0x00000013u;
+    if (index == 81u) return 0x00000013u;
+    if (index == 82u) return 0x00000013u;
+    if (index == 83u) return 0x00000013u;
+    if (index == 84u) return 0x00000013u;
+    if (index == 85u) return 0x00000013u;
+    if (index == 86u) return 0x00100e13u;
+    if (index == 87u) return 0x2dcd9a63u;
+    if (index == 88u) return 0x34202ef3u;
+    if (index == 89u) return 0x80000f37u;
+    if (index == 90u) return 0x007f0f13u;
+    if (index == 91u) return 0x2dee9263u;
+    if (index == 92u) return 0x0000a8b7u;
+    if (index == 93u) return 0x0000b937u;
+    if (index == 94u) return 0x000039b7u;
+    if (index == 95u) return 0xc0198993u;
+    if (index == 96u) return 0x4138a023u;
+    if (index == 97u) return 0x04b00993u;
+    if (index == 98u) return 0x01392023u;
+    if (index == 99u) return 0x4c700993u;
+    if (index == 100u) return 0x01392223u;
+    if (index == 101u) return 0x05900993u;
+    if (index == 102u) return 0x01392423u;
+    if (index == 103u) return 0x4d700993u;
+    if (index == 104u) return 0x01392623u;
+    if (index == 105u) return 0x80000d37u;
+    if (index == 106u) return 0x00ad0d13u;
+    if (index == 107u) return 0x180d1073u;
+    if (index == 108u) return 0x12000073u;
+    if (index == 109u) return 0x000018b7u;
+    if (index == 110u) return 0x02a00a13u;
+    if (index == 111u) return 0x0148a023u;
+    if (index == 112u) return 0x40001ab7u;
+    if (index == 113u) return 0x00021d37u;
+    if (index == 114u) return 0x800d0d13u;
+    if (index == 115u) return 0x300d1073u;
+    if (index == 116u) return 0x000aab03u;
+    if (index == 117u) return 0x254b1e63u;
+    if (index == 118u) return 0x02b00b93u;
+    if (index == 119u) return 0x017aa023u;
+    if (index == 120u) return 0x30001073u;
+    if (index == 121u) return 0x0008ac03u;
+    if (index == 122u) return 0x257c1463u;
+    if (index == 123u) return 0x40000d37u;
+    if (index == 124u) return 0x4a0d0d13u;
+    if (index == 125u) return 0x105d1073u;
+    if (index == 126u) return 0x0000bd37u;
+    if (index == 127u) return 0x3f7d0d13u;
+    if (index == 128u) return 0x302d1073u;
+    if (index == 129u) return 0x02000a13u;
+    if (index == 130u) return 0x304a2073u;
+    if (index == 131u) return 0x303a1073u;
+    if (index == 132u) return 0x40000d37u;
+    if (index == 133u) return 0x22cd0d13u;
+    if (index == 134u) return 0x341d1073u;
+    if (index == 135u) return 0x00001d37u;
+    if (index == 136u) return 0x802d0d13u;
+    if (index == 137u) return 0x300d1073u;
+    if (index == 138u) return 0x30200073u;
+    if (index == 139u) return 0x00200e13u;
+    if (index == 140u) return 0x21cd9a63u;
     if (index == 141u) return 0x14202ef3u;
-    if (index == 142u) return 0x00d00f13u;
-    if (index == 143u) return 0x17ee9063u;
-    if (index == 144u) return 0x14302ef3u;
-    if (index == 145u) return 0x15ae9c63u;
-    if (index == 146u) return 0x000d2023u;
-    if (index == 147u) return 0x00600e13u;
-    if (index == 148u) return 0x15cd9663u;
+    if (index == 142u) return 0x80000f37u;
+    if (index == 143u) return 0x005f0f13u;
+    if (index == 144u) return 0x21ee9263u;
+    if (index == 145u) return 0x00000d93u;
+    if (index == 146u) return 0x00000073u;
+    if (index == 147u) return 0x00100e13u;
+    if (index == 148u) return 0x1fcd9a63u;
     if (index == 149u) return 0x14202ef3u;
-    if (index == 150u) return 0x00f00f13u;
-    if (index == 151u) return 0x15ee9063u;
-    if (index == 152u) return 0x14302ef3u;
-    if (index == 153u) return 0x13ae9c63u;
-    if (index == 154u) return 0x00200d13u;
-    if (index == 155u) return 0x000d0067u;
-    if (index == 156u) return 0x00700e13u;
-    if (index == 157u) return 0x13cd9463u;
-    if (index == 158u) return 0x14202ef3u;
-    if (index == 159u) return 0x00000f13u;
-    if (index == 160u) return 0x11ee9e63u;
-    if (index == 161u) return 0x14302ef3u;
-    if (index == 162u) return 0x00200f13u;
-    if (index == 163u) return 0x11ee9863u;
-    if (index == 164u) return 0x40000d37u;
-    if (index == 165u) return 0x2a4d0d13u;
-    if (index == 166u) return 0x140d1073u;
-    if (index == 167u) return 0x50000d37u;
-    if (index == 168u) return 0x000d0067u;
-    if (index == 169u) return 0x00800e13u;
-    if (index == 170u) return 0x0fcd9a63u;
-    if (index == 171u) return 0x14202ef3u;
-    if (index == 172u) return 0x00c00f13u;
-    if (index == 173u) return 0x0fee9463u;
-    if (index == 174u) return 0x14302ef3u;
-    if (index == 175u) return 0x0fae9063u;
-    if (index == 176u) return 0x12000073u;
-    if (index == 177u) return 0x40003d37u;
-    if (index == 178u) return 0x000d2a03u;
-    if (index == 179u) return 0x00900e13u;
-    if (index == 180u) return 0x0dcd9663u;
-    if (index == 181u) return 0x14202ef3u;
-    if (index == 182u) return 0x00d00f13u;
-    if (index == 183u) return 0x0dee9063u;
-    if (index == 184u) return 0x00040cb7u;
-    if (index == 185u) return 0x100ca073u;
-    if (index == 186u) return 0x000d2a03u;
-    if (index == 187u) return 0x0b7a1863u;
-    if (index == 188u) return 0x40002d37u;
-    if (index == 189u) return 0x338d0d13u;
-    if (index == 190u) return 0x000d2a03u;
-    if (index == 191u) return 0x00a00e13u;
-    if (index == 192u) return 0x09cd9e63u;
-    if (index == 193u) return 0x14202ef3u;
-    if (index == 194u) return 0x00d00f13u;
-    if (index == 195u) return 0x09ee9863u;
-    if (index == 196u) return 0x00080cb7u;
-    if (index == 197u) return 0x100ca073u;
-    if (index == 198u) return 0x000d2a03u;
-    if (index == 199u) return 0x07300b93u;
-    if (index == 200u) return 0x077a1e63u;
-    if (index == 201u) return 0x40002d37u;
-    if (index == 202u) return 0x334d0d13u;
-    if (index == 203u) return 0x141d1073u;
-    if (index == 204u) return 0x10200073u;
-    if (index == 205u) return 0x00000d93u;
-    if (index == 206u) return 0x00000073u;
-    if (index == 207u) return 0x00100e13u;
-    if (index == 208u) return 0x07cd9863u;
-    if (index == 209u) return 0x00800e13u;
-    if (index == 210u) return 0x07cf1463u;
-    if (index == 211u) return 0x40000d37u;
-    if (index == 212u) return 0x000d2003u;
-    if (index == 213u) return 0x00200e13u;
-    if (index == 214u) return 0x05cd9c63u;
-    if (index == 215u) return 0x00d00e13u;
-    if (index == 216u) return 0x05cf1863u;
-    if (index == 217u) return 0x400030b7u;
-    if (index == 218u) return 0x00100113u;
-    if (index == 219u) return 0x40004337u;
-    if (index == 220u) return 0x90030313u;
-    if (index == 221u) return 0x0020a023u;
-    if (index == 222u) return 0x00408093u;
-    if (index == 223u) return 0x00110113u;
-    if (index == 224u) return 0xfe60eae3u;
-    if (index == 225u) return 0x00100073u;
-    if (index == 226u) return 0x000010b7u;
-    if (index == 227u) return 0xdeadc137u;
-    if (index == 228u) return 0xeef10113u;
-    if (index == 229u) return 0x0020a023u;
-    if (index == 230u) return 0x00100073u;
-    if (index == 231u) return 0x400010b7u;
-    if (index == 232u) return 0xdeadc137u;
-    if (index == 233u) return 0xeef10113u;
-    if (index == 234u) return 0x0020a023u;
-    if (index == 235u) return 0x00100073u;
-    if (index == 236u) return 0x400030b7u;
-    if (index == 237u) return 0xdeadc137u;
-    if (index == 238u) return 0xeef10113u;
-    if (index == 239u) return 0x0020a023u;
-    if (index == 240u) return 0x00100073u;
-    if (index == 241u) return 0x001d8d93u;
-    if (index == 242u) return 0x34102ff3u;
-    if (index == 243u) return 0x004f8f93u;
-    if (index == 244u) return 0x341f9073u;
-    if (index == 245u) return 0x30200073u;
-    if (index == 246u) return 0x001d8d93u;
-    if (index == 247u) return 0x14202f73u;
-    if (index == 248u) return 0x00c00f93u;
-    if (index == 249u) return 0x01ff1863u;
-    if (index == 250u) return 0x14002ff3u;
-    if (index == 251u) return 0x141f9073u;
-    if (index == 252u) return 0x10200073u;
-    if (index == 253u) return 0x14102ff3u;
-    if (index == 254u) return 0x004f8f93u;
-    if (index == 255u) return 0x141f9073u;
-    if (index == 256u) return 0x10200073u;
+    if (index == 150u) return 0x00900f13u;
+    if (index == 151u) return 0x1fee9463u;
+    if (index == 152u) return 0xffffffffu;
+    if (index == 153u) return 0x00200e13u;
+    if (index == 154u) return 0x1dcd9e63u;
+    if (index == 155u) return 0x14202ef3u;
+    if (index == 156u) return 0x00200f13u;
+    if (index == 157u) return 0x1dee9863u;
+    if (index == 158u) return 0x14302ef3u;
+    if (index == 159u) return 0xfff00f13u;
+    if (index == 160u) return 0x1dee9263u;
+    if (index == 161u) return 0x00102003u;
+    if (index == 162u) return 0x00300e13u;
+    if (index == 163u) return 0x1bcd9c63u;
+    if (index == 164u) return 0x14202ef3u;
+    if (index == 165u) return 0x00400f13u;
+    if (index == 166u) return 0x1bee9663u;
+    if (index == 167u) return 0x14302ef3u;
+    if (index == 168u) return 0x00100f13u;
+    if (index == 169u) return 0x1bee9063u;
+    if (index == 170u) return 0x00002123u;
+    if (index == 171u) return 0x00400e13u;
+    if (index == 172u) return 0x19cd9a63u;
+    if (index == 173u) return 0x14202ef3u;
+    if (index == 174u) return 0x00600f13u;
+    if (index == 175u) return 0x19ee9463u;
+    if (index == 176u) return 0x14302ef3u;
+    if (index == 177u) return 0x00200f13u;
+    if (index == 178u) return 0x17ee9e63u;
+    if (index == 179u) return 0x50000d37u;
+    if (index == 180u) return 0x000d2003u;
+    if (index == 181u) return 0x00500e13u;
+    if (index == 182u) return 0x17cd9663u;
+    if (index == 183u) return 0x14202ef3u;
+    if (index == 184u) return 0x00d00f13u;
+    if (index == 185u) return 0x17ee9063u;
+    if (index == 186u) return 0x14302ef3u;
+    if (index == 187u) return 0x15ae9c63u;
+    if (index == 188u) return 0x000d2023u;
+    if (index == 189u) return 0x00600e13u;
+    if (index == 190u) return 0x15cd9663u;
+    if (index == 191u) return 0x14202ef3u;
+    if (index == 192u) return 0x00f00f13u;
+    if (index == 193u) return 0x15ee9063u;
+    if (index == 194u) return 0x14302ef3u;
+    if (index == 195u) return 0x13ae9c63u;
+    if (index == 196u) return 0x00200d13u;
+    if (index == 197u) return 0x000d0067u;
+    if (index == 198u) return 0x00700e13u;
+    if (index == 199u) return 0x13cd9463u;
+    if (index == 200u) return 0x14202ef3u;
+    if (index == 201u) return 0x00000f13u;
+    if (index == 202u) return 0x11ee9e63u;
+    if (index == 203u) return 0x14302ef3u;
+    if (index == 204u) return 0x00200f13u;
+    if (index == 205u) return 0x11ee9863u;
+    if (index == 206u) return 0x40000d37u;
+    if (index == 207u) return 0x34cd0d13u;
+    if (index == 208u) return 0x140d1073u;
+    if (index == 209u) return 0x50000d37u;
+    if (index == 210u) return 0x000d0067u;
+    if (index == 211u) return 0x00800e13u;
+    if (index == 212u) return 0x0fcd9a63u;
+    if (index == 213u) return 0x14202ef3u;
+    if (index == 214u) return 0x00c00f13u;
+    if (index == 215u) return 0x0fee9463u;
+    if (index == 216u) return 0x14302ef3u;
+    if (index == 217u) return 0x0fae9063u;
+    if (index == 218u) return 0x12000073u;
+    if (index == 219u) return 0x40003d37u;
+    if (index == 220u) return 0x000d2a03u;
+    if (index == 221u) return 0x00900e13u;
+    if (index == 222u) return 0x0dcd9663u;
+    if (index == 223u) return 0x14202ef3u;
+    if (index == 224u) return 0x00d00f13u;
+    if (index == 225u) return 0x0dee9063u;
+    if (index == 226u) return 0x00040cb7u;
+    if (index == 227u) return 0x100ca073u;
+    if (index == 228u) return 0x000d2a03u;
+    if (index == 229u) return 0x0b7a1863u;
+    if (index == 230u) return 0x40002d37u;
+    if (index == 231u) return 0x3e0d0d13u;
+    if (index == 232u) return 0x000d2a03u;
+    if (index == 233u) return 0x00a00e13u;
+    if (index == 234u) return 0x09cd9e63u;
+    if (index == 235u) return 0x14202ef3u;
+    if (index == 236u) return 0x00d00f13u;
+    if (index == 237u) return 0x09ee9863u;
+    if (index == 238u) return 0x00080cb7u;
+    if (index == 239u) return 0x100ca073u;
+    if (index == 240u) return 0x000d2a03u;
+    if (index == 241u) return 0x07300b93u;
+    if (index == 242u) return 0x077a1e63u;
+    if (index == 243u) return 0x40002d37u;
+    if (index == 244u) return 0x3dcd0d13u;
+    if (index == 245u) return 0x141d1073u;
+    if (index == 246u) return 0x10200073u;
+    if (index == 247u) return 0x00000d93u;
+    if (index == 248u) return 0x00000073u;
+    if (index == 249u) return 0x00100e13u;
+    if (index == 250u) return 0x07cd9863u;
+    if (index == 251u) return 0x00800e13u;
+    if (index == 252u) return 0x07cf1463u;
+    if (index == 253u) return 0x40000d37u;
+    if (index == 254u) return 0x000d2003u;
+    if (index == 255u) return 0x00200e13u;
+    if (index == 256u) return 0x05cd9c63u;
+    if (index == 257u) return 0x00d00e13u;
+    if (index == 258u) return 0x05cf1863u;
+    if (index == 259u) return 0x400030b7u;
+    if (index == 260u) return 0x00100113u;
+    if (index == 261u) return 0x40004337u;
+    if (index == 262u) return 0x90030313u;
+    if (index == 263u) return 0x0020a023u;
+    if (index == 264u) return 0x00408093u;
+    if (index == 265u) return 0x00110113u;
+    if (index == 266u) return 0xfe60eae3u;
+    if (index == 267u) return 0x00100073u;
+    if (index == 268u) return 0x000010b7u;
+    if (index == 269u) return 0xdeadc137u;
+    if (index == 270u) return 0xeef10113u;
+    if (index == 271u) return 0x0020a023u;
+    if (index == 272u) return 0x00100073u;
+    if (index == 273u) return 0x400010b7u;
+    if (index == 274u) return 0xdeadc137u;
+    if (index == 275u) return 0xeef10113u;
+    if (index == 276u) return 0x0020a023u;
+    if (index == 277u) return 0x00100073u;
+    if (index == 278u) return 0x400030b7u;
+    if (index == 279u) return 0xdeadc137u;
+    if (index == 280u) return 0xeef10113u;
+    if (index == 281u) return 0x0020a023u;
+    if (index == 282u) return 0x00100073u;
+    if (index == 283u) return 0x34202f73u;
+    if (index == 284u) return 0x000f4c63u;
+    if (index == 285u) return 0x001d8d93u;
+    if (index == 286u) return 0x34102ff3u;
+    if (index == 287u) return 0x004f8f93u;
+    if (index == 288u) return 0x341f9073u;
+    if (index == 289u) return 0x30200073u;
+    if (index == 290u) return 0x001d8d93u;
+    if (index == 291u) return 0x08000f93u;
+    if (index == 292u) return 0x304fb073u;
+    if (index == 293u) return 0x02000f93u;
+    if (index == 294u) return 0x344fa073u;
+    if (index == 295u) return 0x30200073u;
+    if (index == 296u) return 0x14202f73u;
+    if (index == 297u) return 0x020f4663u;
+    if (index == 298u) return 0x001d8d93u;
+    if (index == 299u) return 0x00c00f93u;
+    if (index == 300u) return 0x01ff1863u;
+    if (index == 301u) return 0x14002ff3u;
+    if (index == 302u) return 0x141f9073u;
+    if (index == 303u) return 0x10200073u;
+    if (index == 304u) return 0x14102ff3u;
+    if (index == 305u) return 0x004f8f93u;
+    if (index == 306u) return 0x141f9073u;
+    if (index == 307u) return 0x10200073u;
+    if (index == 308u) return 0x001d8d93u;
+    if (index == 309u) return 0x02000f93u;
+    if (index == 310u) return 0x144fb073u;
+    if (index == 311u) return 0x10200073u;
     return 0u;
 }
-
 uint initialWord(uint index) {
     if (index == MAGIC_INDEX) return MAGIC_VALUE;
     if (index == PC_INDEX) return 0u;
     if (index == CYCLE_INDEX) return 0u;
     if (index == STATUS_INDEX) return STATUS_RUNNING;
     if (index == PRIVILEGE_INDEX) return PRIVILEGE_MACHINE;
+    if (index == CLINT_MTIMECMP_LOW_INDEX
+            || index == CLINT_MTIMECMP_HIGH_INDEX) return 0xffffffffu;
     if (index >= CSR_BASE && index < REGISTER_BASE) return 0u;
     if (index >= REGISTER_BASE && index < REGISTER_BASE + 32u) return 0u;
     return initialProgramWord(index);
@@ -582,9 +694,31 @@ void main() {
     bool machineTrap = false;
     bool supervisorTrap = false;
     bool takeTrap = false;
+    bool trapInterrupt = false;
     uint trapCause = 0u;
     uint trapValue = 0u;
     uint trapMstatus = 0u;
+
+    uint enabledPending = readCSR(CSR_MIP) & readCSR(CSR_MIE);
+    uint delegatedPending = enabledPending & readCSR(CSR_MIDELEG);
+    uint machinePending = enabledPending & ~readCSR(CSR_MIDELEG);
+    bool machineInterruptsEnabled = currentPrivilege < PRIVILEGE_MACHINE
+        || (currentPrivilege == PRIVILEGE_MACHINE
+            && ((currentMstatus >> 3u) & 1u) != 0u);
+    bool supervisorInterruptsEnabled = currentPrivilege < PRIVILEGE_SUPERVISOR
+        || (currentPrivilege == PRIVILEGE_SUPERVISOR
+            && ((currentMstatus >> 1u) & 1u) != 0u);
+    uint interruptCause = machineInterruptsEnabled
+        ? selectInterruptCause(machinePending) : INVALID_INDEX;
+    if (interruptCause == INVALID_INDEX && currentPrivilege != PRIVILEGE_MACHINE
+            && supervisorInterruptsEnabled) {
+        interruptCause = selectInterruptCause(delegatedPending);
+    }
+    if (interruptCause != INVALID_INDEX) {
+        takeTrap = true;
+        trapInterrupt = true;
+        trapCause = interruptCause;
+    }
 
     bool fetchAligned = (pc & 3u) == 0u;
     uint instructionAddress = 0u;
@@ -593,7 +727,9 @@ void main() {
     bool fetchInRange = fetchTranslated && instructionAddress <= RAM_BYTES - 4u;
     uint instruction = fetchInRange ? readMemoryWord(instructionAddress) : 0u;
 
-    if (!fetchAligned) {
+    if (takeTrap) {
+        // Interrupts are taken between instructions, preserving the current PC.
+    } else if (!fetchAligned) {
         takeTrap = true;
         trapCause = 0u;
         trapValue = pc;
@@ -698,7 +834,7 @@ void main() {
             uint physicalAddress = 0u;
             bool translated = width > 0u && aligned
                 && translateAddress(address, ACCESS_LOAD, dataPrivilege, physicalAddress);
-            bool inRange = translated && physicalAddress <= RAM_BYTES - width;
+            bool inRange = translated && physicalAccessValid(physicalAddress, width);
 
             if (width == 0u) {
                 legal = false;
@@ -715,7 +851,7 @@ void main() {
                 trapCause = 5u;
                 trapValue = address;
             } else {
-                uint word = readMemoryWord(physicalAddress);
+                uint word = readPhysicalWord(physicalAddress);
                 uint shift = (physicalAddress & 3u) * 8u;
                 uint loaded = width == 1u ? ((word >> shift) & 0xffu)
                             : width == 2u ? ((word >> shift) & 0xffffu)
@@ -734,7 +870,7 @@ void main() {
             uint physicalAddress = 0u;
             bool translated = width > 0u && aligned
                 && translateAddress(address, ACCESS_STORE, dataPrivilege, physicalAddress);
-            bool inRange = translated && physicalAddress <= RAM_BYTES - width;
+            bool inRange = translated && physicalAccessValid(physicalAddress, width);
 
             if (width == 0u) {
                 legal = false;
@@ -830,7 +966,7 @@ void main() {
                 trapCause = loadReservation ? 5u : 7u;
                 trapValue = address;
             } else {
-                uint oldMemoryValue = readMemoryWord(physicalAddress);
+                uint oldMemoryValue = readPhysicalWord(physicalAddress);
                 writeRegister = true;
                 destinationRegister = rd;
                 registerValue = oldMemoryValue;
@@ -967,14 +1103,17 @@ void main() {
         writeCSR = false;
         uint mstatus = readCSR(CSR_MSTATUS);
         bool delegated = currentPrivilege != PRIVILEGE_MACHINE
-            && ((readCSR(CSR_MEDELEG) >> trapCause) & 1u) != 0u;
+            && (((trapInterrupt ? readCSR(CSR_MIDELEG) : readCSR(CSR_MEDELEG))
+                >> trapCause) & 1u) != 0u;
         if (delegated) {
             supervisorTrap = true;
             uint supervisorInterruptEnable = (mstatus >> 1u) & 1u;
             trapMstatus = (mstatus & ~0x122u)
                 | (supervisorInterruptEnable << 5u)
                 | ((currentPrivilege & 1u) << 8u);
-            nextPc = readCSR(CSR_STVEC) & ~0x3u;
+            uint trapVector = readCSR(CSR_STVEC);
+            nextPc = (trapVector & ~0x3u)
+                + (trapInterrupt && (trapVector & 0x3u) == 1u ? trapCause * 4u : 0u);
             nextPrivilege = PRIVILEGE_SUPERVISOR;
         } else {
             machineTrap = true;
@@ -982,7 +1121,9 @@ void main() {
             trapMstatus = (mstatus & ~0x1888u)
                 | (machineInterruptEnable << 7u)
                 | (currentPrivilege << 11u);
-            nextPc = readCSR(CSR_MTVEC) & ~0x3u;
+            uint trapVector = readCSR(CSR_MTVEC);
+            nextPc = (trapVector & ~0x3u)
+                + (trapInterrupt && (trapVector & 0x3u) == 1u ? trapCause * 4u : 0u);
             nextPrivilege = PRIVILEGE_MACHINE;
         }
     }
@@ -992,6 +1133,12 @@ void main() {
     }
 
     uint outputWord = currentWord;
+    uint currentTimeLow = readStateWord(CLINT_MTIME_LOW_INDEX);
+    uint nextTimeLow = currentTimeLow + 1u;
+    uint nextTimeHigh = readStateWord(CLINT_MTIME_HIGH_INDEX)
+        + (nextTimeLow < currentTimeLow ? 1u : 0u);
+    if (outputIndex == CLINT_MTIME_LOW_INDEX) outputWord = nextTimeLow;
+    if (outputIndex == CLINT_MTIME_HIGH_INDEX) outputWord = nextTimeHigh;
     if (outputIndex == PC_INDEX) outputWord = nextPc;
     if (outputIndex == CYCLE_INDEX) outputWord = cycle + 1u;
     if (outputIndex == STATUS_INDEX) outputWord = nextStatus;
@@ -1014,17 +1161,22 @@ void main() {
     if (machineTrap) {
         if (outputIndex == csrStateIndex(CSR_MSTATUS)) outputWord = trapMstatus;
         if (outputIndex == csrStateIndex(CSR_MEPC)) outputWord = pc;
-        if (outputIndex == csrStateIndex(CSR_MCAUSE)) outputWord = trapCause;
+        if (outputIndex == csrStateIndex(CSR_MCAUSE)) {
+            outputWord = trapCause | (trapInterrupt ? 0x80000000u : 0u);
+        }
         if (outputIndex == csrStateIndex(CSR_MTVAL)) outputWord = trapValue;
     }
     if (supervisorTrap) {
         if (outputIndex == csrStateIndex(CSR_MSTATUS)) outputWord = trapMstatus;
         if (outputIndex == csrStateIndex(CSR_SEPC)) outputWord = pc;
-        if (outputIndex == csrStateIndex(CSR_SCAUSE)) outputWord = trapCause;
+        if (outputIndex == csrStateIndex(CSR_SCAUSE)) {
+            outputWord = trapCause | (trapInterrupt ? 0x80000000u : 0u);
+        }
         if (outputIndex == csrStateIndex(CSR_STVAL)) outputWord = trapValue;
     }
 
-    if (writeMemory && outputIndex == (memoryAddress >> 2u)) {
+    if (writeMemory && memoryAddress < RAM_BYTES
+            && outputIndex == (memoryAddress >> 2u)) {
         uint shift = (memoryAddress & 3u) * 8u;
         if (memoryWidth == 1u) {
             uint mask = 0xffu << shift;
@@ -1035,6 +1187,11 @@ void main() {
         } else {
             outputWord = memoryValue;
         }
+    }
+    uint clintWriteIndex = clintStateIndex(memoryAddress);
+    if (writeMemory && memoryWidth == 4u
+            && clintWriteIndex != INVALID_INDEX && outputIndex == clintWriteIndex) {
+        outputWord = memoryValue;
     }
 
     fragColor = encodeWord(outputWord);
