@@ -2,7 +2,7 @@
 
 一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、CLINT、16550A 风格 UART、PLIC、异常与中断 delegation，以及 trap 返回路径。
 
-CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。guest binary 由资源包内的 RGBA8 纹理提供，纹理尾部的 boot descriptor 指定 RAM 物理基址、入口 PC 与 DTB 地址。初始化 pass 将纹理内容复制到 RAM，并按 RISC-V 启动约定设置 `a0` 与 `a1`。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
+CPU、寄存器、PC、CSR 和设备状态保存在两个 128 × 128 persistent render target 中，1 MiB RAM 保存在一组 1024 × 256 persistent render target 中。guest binary 由资源包内的 RGBA8 纹理提供，纹理尾部的 boot descriptor 指定 RAM 物理基址、入口 PC 与 DTB 地址。初始化 pass 将 guest payload 复制到 RAM，并按 RISC-V 启动约定设置 `a0` 与 `a1`。每条指令依次经过 CPU 计算和 RAM 事务提交，每个画面帧完成两条 RISC-V 指令。显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
 ## 特性
 
@@ -24,7 +24,7 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - instruction/load/store page fault 与 `SFENCE.VMA`
 - 32 个 32 位整数寄存器与硬连线零寄存器 `x0`
 - 32 位程序计数器与周期计数器
-- 65,200 字节小端 RAM
+- 1,048,572 字节小端 RAM
 - 8 位、16 位和 32 位 load/store
 - 自然对齐访问与标准 `cause`/`tval` 异常元数据
 - 32 × 18 单词显存，基地址为 `0x00001000`
@@ -115,7 +115,7 @@ U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`�
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级、LR/SC reservation 和 CLINT 计时状态。
 
-当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括扩展 RAM texture、OpenSBI payload 与 SBI 服务。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括 OpenSBI payload 验证、SBI 服务和更大容量的 RAM 配置。
 
 ## 平台设备与中断
 
@@ -153,7 +153,7 @@ PLIC 使用 QEMU `virt` 风格地址与 UART source 10：
 | 节点 | 关键属性 |
 | --- | --- |
 | `/cpus/cpu@0` | `rv32imasu`、Sv32、hart 0 |
-| `/memory@80000000` | 基址 `0x80000000`，长度 65,200 字节 |
+| `/memory@80000000` | 基址 `0x80000000`，长度 1,048,572 字节 |
 | `/soc/clint@2000000` | machine software/timer interrupt |
 | `/soc/plic@c000000` | source 1–10，M/S external interrupt context |
 | `/soc/uart@10000000` | `ns16550a`，PLIC source 10 |
@@ -171,35 +171,39 @@ B = bits 23..16
 A = bits 31..24
 ```
 
-128 × 128 纹理包含 16,384 个单词：
+CPU state target 使用 128 × 128 布局，共包含 16,384 个单词：
 
 | 单词索引 | 内容 |
 | --- | --- |
-| `0`–`16299` | RAM，字节地址 `0x00000000`–`0x0000feaf` |
+| `0`–`16299` | 扩展状态空间 |
 | `16300`–`16315` | CLINT、UART 与 PLIC device state |
-| `16316`–`16347` | CSR、特权级与 atomic reservation 状态 |
+| `16316`–`16347` | CSR、RAM 写事务、特权级与 atomic reservation 状态 |
 | `16348`–`16379` | `x0`–`x31` |
 | `16380` | CPU 状态 |
 | `16381` | 周期计数器 |
 | `16382` | PC |
 | `16383` | 初始化魔数 `0x52563332` |
 
-双缓冲执行流程：
+RAM target 使用 1024 × 256 布局。单词 `0`–`262142` 提供 1,048,572 字节 guest RAM，单词 `262143` 保存 RAM 初始化魔数。CPU 与 RAM 各自采用双缓冲，默认执行流程为：
 
 ```text
-state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
+state_a + ram_a → CPU step → state_b
+ram_a + state_b → RAM commit → ram_b
+state_b + ram_b → CPU step → state_a
+ram_b + state_a → RAM commit → ram_a
+state_a + ram_a → dashboard
 ```
 
-每个片元读取同一条指令、源寄存器与相关内存。输出坐标决定该片元负责 RAM 单词、目标寄存器或 CPU 元数据。这个结构将一次指令提交表达为整张纹理的并行状态转换。
+CPU step 的每个片元读取同一条指令、源寄存器与相关内存，并将一次 RAM 写入编码为地址、数值和宽度。RAM commit 将这笔事务合并到目标 RAM texture。这个结构让 CPU 状态转换保持 128 × 128 的固定成本，同时允许 RAM texture 独立扩展。
 
-guest image 同样使用 128 × 128 RGBA8 布局。初始化时，单词索引 `0`–`16299` 从 guest texture 复制到 RAM，机器状态区由 shader 设置。guest texture 尾部保存四个 32 位 boot descriptor 单词：
+guest image 使用 1024 × 256 RGBA8 布局。初始化时，payload 从 guest texture 复制到 RAM，CPU state 由 shader 设置。guest texture 尾部保存四个 32 位 boot descriptor 单词：
 
 | guest 单词索引 | 内容 |
 | --- | --- |
-| `16380` | DTB 物理地址 |
-| `16381` | 入口 PC |
-| `16382` | RAM 物理基址 |
-| `16383` | descriptor magic `0x4D435256` |
+| `262140` | DTB 物理地址 |
+| `262141` | 入口 PC |
+| `262142` | RAM 物理基址 |
+| `262143` | descriptor magic `0x4D435256` |
 
 复位时，`a0` 保存 hart ID `0`，`a1` 保存 DTB 物理地址。`DtbImageSampler` 提供 1024 个 RGBA 像素，对应 4 KiB 只读 DTB window。`dtb_mcrv.png` 保存平台 DTB 并映射到 `0x00001020`。内置 framebuffer demo 使用物理基址与入口 `0x00000000`。boot probe 使用物理基址与入口 `0x80000000`。
 
@@ -214,7 +218,7 @@ guest image 同样使用 128 × 128 RGBA8 布局。初始化时，单词索引 `
 
 ## 加载自己的程序
 
-boot descriptor 决定平面 RV32 binary 的物理加载基址和入口 PC。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。RAM window 长度为 65,200 字节，平台设备使用上表列出的 MMIO 地址。
+boot descriptor 决定平面 RV32 binary 的物理加载基址和入口 PC。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。RAM window 长度为 1,048,572 字节，guest payload 容量为 1,048,560 字节，平台设备使用上表列出的 MMIO 地址。
 
 仓库内置的小型两遍汇编器支持 demo 使用的 RV32IMA/Zicsr 子集、标签和 `.org`：
 
@@ -268,7 +272,7 @@ python tools/test_demo.py
 RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; 0x80000000 boot descriptor, platform DTB and a0/a1 probe
 ```
 
-[`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。
+[`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译 CPU、RAM commit 和显示三个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。
 
 ## 设计依据
 

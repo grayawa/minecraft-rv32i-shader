@@ -12,6 +12,18 @@
       "height": 128,
       "persistent": true,
       "clear_color": [0.0, 0.0, 0.0, 0.0]
+    },
+    "ram_a": {
+      "width": 1024,
+      "height": 256,
+      "persistent": true,
+      "clear_color": [0.0, 0.0, 0.0, 0.0]
+    },
+    "ram_b": {
+      "width": 1024,
+      "height": 256,
+      "persistent": true,
+      "clear_color": [0.0, 0.0, 0.0, 0.0]
     }
   },
   "passes": [
@@ -44,10 +56,14 @@
           "target": "state_a"
         },
         {
+          "sampler_name": "Ram",
+          "target": "ram_a"
+        },
+        {
           "sampler_name": "GuestImage",
           "location": "mcrv:guest_boot_probe",
-          "width": 128,
-          "height": 128
+          "width": 1024,
+          "height": 256
         },
         {
           "sampler_name": "DtbImage",
@@ -60,8 +76,12 @@
     },
     {
       "vertex_shader": "minecraft:core/screenquad",
-      "fragment_shader": "mcrv:post/rv32_step",
+      "fragment_shader": "mcrv:post/rv32_ram_commit",
       "inputs": [
+        {
+          "sampler_name": "Ram",
+          "target": "ram_a"
+        },
         {
           "sampler_name": "State",
           "target": "state_b"
@@ -69,8 +89,29 @@
         {
           "sampler_name": "GuestImage",
           "location": "mcrv:guest_boot_probe",
-          "width": 128,
-          "height": 128
+          "width": 1024,
+          "height": 256
+        }
+      ],
+      "output": "ram_b"
+    },
+    {
+      "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "mcrv:post/rv32_step",
+      "inputs": [
+        {
+          "sampler_name": "State",
+          "target": "state_b"
+        },
+        {
+          "sampler_name": "Ram",
+          "target": "ram_b"
+        },
+        {
+          "sampler_name": "GuestImage",
+          "location": "mcrv:guest_boot_probe",
+          "width": 1024,
+          "height": 256
         },
         {
           "sampler_name": "DtbImage",
@@ -83,6 +124,27 @@
     },
     {
       "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "mcrv:post/rv32_ram_commit",
+      "inputs": [
+        {
+          "sampler_name": "Ram",
+          "target": "ram_b"
+        },
+        {
+          "sampler_name": "State",
+          "target": "state_a"
+        },
+        {
+          "sampler_name": "GuestImage",
+          "location": "mcrv:guest_boot_probe",
+          "width": 1024,
+          "height": 256
+        }
+      ],
+      "output": "ram_a"
+    },
+    {
+      "vertex_shader": "minecraft:core/screenquad",
       "fragment_shader": "mcrv:post/rv32_display",
       "inputs": [
         {
@@ -92,6 +154,10 @@
         {
           "sampler_name": "State",
           "target": "state_a"
+        },
+        {
+          "sampler_name": "Ram",
+          "target": "ram_a"
         }
       ],
       "output": "minecraft:main"

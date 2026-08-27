@@ -3,6 +3,7 @@
 
 uniform sampler2D SceneSampler;
 uniform sampler2D StateSampler;
+uniform sampler2D RamSampler;
 
 layout(location = 0) in vec2 texCoord;
 
@@ -10,11 +11,13 @@ layout(std140) uniform SamplerInfo {
     vec2 OutSize;
     vec2 SceneSize;
     vec2 StateSize;
+    vec2 RamSize;
 };
 
 layout(location = 0) out vec4 fragColor;
 
-const uint TEXTURE_WIDTH = 128u;
+const uint STATE_TEXTURE_WIDTH = 128u;
+const uint RAM_TEXTURE_WIDTH = 1024u;
 const uint REGISTER_BASE = 16348u;
 const uint STATUS_INDEX = 16380u;
 const uint CYCLE_INDEX = 16381u;
@@ -25,8 +28,12 @@ const uint UART_TX_BUFFER_ADDRESS = 0x00001900u;
 const uint UART_TX_BUFFER_BYTES = 64u;
 const ivec2 FRAMEBUFFER_SIZE = ivec2(32, 18);
 
-ivec2 wordCoordinate(uint index) {
-    return ivec2(int(index % TEXTURE_WIDTH), int(index / TEXTURE_WIDTH));
+ivec2 stateWordCoordinate(uint index) {
+    return ivec2(int(index % STATE_TEXTURE_WIDTH), int(index / STATE_TEXTURE_WIDTH));
+}
+
+ivec2 ramWordCoordinate(uint index) {
+    return ivec2(int(index % RAM_TEXTURE_WIDTH), int(index / RAM_TEXTURE_WIDTH));
 }
 
 uint decodeWord(vec4 encoded) {
@@ -34,12 +41,16 @@ uint decodeWord(vec4 encoded) {
     return bytes.r | (bytes.g << 8u) | (bytes.b << 16u) | (bytes.a << 24u);
 }
 
-uint readWord(uint index) {
-    return decodeWord(texelFetch(StateSampler, wordCoordinate(index), 0));
+uint readStateWord(uint index) {
+    return decodeWord(texelFetch(StateSampler, stateWordCoordinate(index), 0));
+}
+
+uint readRamWord(uint index) {
+    return decodeWord(texelFetch(RamSampler, ramWordCoordinate(index), 0));
 }
 
 uint readByte(uint address) {
-    return (readWord(address >> 2u) >> ((address & 3u) * 8u)) & 0xffu;
+    return (readRamWord(address >> 2u) >> ((address & 3u) * 8u)) & 0xffu;
 }
 
 uint glyphBits(int code) {
@@ -167,7 +178,7 @@ void main() {
     if (inFramebuffer) {
         ivec2 cell = ivec2(floor(framebufferPixel / 6.0));
         uint index = FRAMEBUFFER_BASE + uint(cell.y * FRAMEBUFFER_SIZE.x + cell.x);
-        vec3 pixelColour = framebufferColour(readWord(index));
+        vec3 pixelColour = framebufferColour(readRamWord(index));
         vec2 withinCell = fract(framebufferPixel / 6.0);
         float cellEdge = min(min(withinCell.x, 1.0 - withinCell.x),
                              min(withinCell.y, 1.0 - withinCell.y));
@@ -187,7 +198,7 @@ void main() {
     uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(123.0, 137.0), 88, 1.0));
     colour = mix(colour, textColour * 0.88, uartLabelInk);
 
-    uint uartHead = readWord(UART_TX_HEAD_INDEX);
+    uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
     uint uartCount = min(uartHead, 32u);
     uint uartStart = uartHead - uartCount;
     float uartInk = 0.0;
@@ -208,7 +219,7 @@ void main() {
             && memoryPixel.y >= 0.0 && memoryPixel.y < 18.0) {
         ivec2 cell = ivec2(floor(memoryPixel / 3.0));
         uint index = uint(cell.y * 64 + cell.x);
-        uint value = readWord(index);
+        uint value = readRamWord(index);
         vec3 heat = vec3(
             float(value & 0xffu),
             float((value >> 8u) & 0xffu),
@@ -231,9 +242,9 @@ void main() {
     colour = mix(colour, textColour, labelInk);
 
     float valueInk = 0.0;
-    valueInk = max(valueInk, drawHex(p, vec2(25.0, 28.0), readWord(PC_INDEX), 1.0));
-    valueInk = max(valueInk, drawHex(p, vec2(25.0, 39.0), readWord(CYCLE_INDEX), 1.0));
-    valueInk = max(valueInk, drawHex(p, vec2(25.0, 50.0), readWord(STATUS_INDEX), 1.0));
+    valueInk = max(valueInk, drawHex(p, vec2(25.0, 28.0), readStateWord(PC_INDEX), 1.0));
+    valueInk = max(valueInk, drawHex(p, vec2(25.0, 39.0), readStateWord(CYCLE_INDEX), 1.0));
+    valueInk = max(valueInk, drawHex(p, vec2(25.0, 50.0), readStateWord(STATUS_INDEX), 1.0));
 
     for (int row = 0; row < 8; ++row) {
         int registerIndex = row + 1;
@@ -241,11 +252,11 @@ void main() {
         float registerLabel = drawRegisterLabel(p, vec2(10.0, y), registerIndex);
         colour = mix(colour, textColour * 0.88, registerLabel);
         valueInk = max(valueInk, drawHex(p, vec2(29.0, y),
-                                         readWord(REGISTER_BASE + uint(registerIndex)), 1.0));
+                                         readStateWord(REGISTER_BASE + uint(registerIndex)), 1.0));
     }
     colour = mix(colour, valueColour, valueInk);
 
-    uint status = readWord(STATUS_INDEX);
+    uint status = readStateWord(STATUS_INDEX);
     vec3 statusColour = status == 0u ? vec3(0.18, 1.0, 0.48)
                       : status == 1u ? vec3(1.0, 0.78, 0.16)
                       : vec3(1.0, 0.18, 0.30);

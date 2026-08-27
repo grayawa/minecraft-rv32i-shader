@@ -21,7 +21,7 @@ from build_dtb import (
 
 
 MASK32 = 0xFFFFFFFF
-RAM_BYTES = 16_300 * 4
+RAM_BYTES = 262_143 * 4
 FRAMEBUFFER_ADDRESS = 0x1000
 FRAMEBUFFER_WORDS = 32 * 18
 UART_TX_BUFFER_ADDRESS = 0x1900
@@ -991,7 +991,7 @@ def main() -> None:
         project_root / "assets" / "mcrv" / "textures" / "effect" / "guest_demo.png"
     )
     width, height, texture_bytes = decode_guest_texture(texture_path.read_bytes())
-    assert (width, height) == (128, 128)
+    assert (width, height) == (1024, 256)
     program = list(struct.unpack_from(f"<{len(EXPECTED_PROGRAM)}I", texture_bytes))
     assert program == EXPECTED_PROGRAM
     descriptor_offset = len(texture_bytes) - BOOT_DESCRIPTOR_WORDS * 4
@@ -1009,6 +1009,13 @@ def main() -> None:
         if entry["fragment_shader"] == "mcrv:post/rv32_step"
     ]
     assert len(step_passes) == 2
+    assert post_effect["targets"]["ram_a"] == {
+        "width": 1024,
+        "height": 256,
+        "persistent": True,
+        "clear_color": [0.0, 0.0, 0.0, 0.0],
+    }
+    assert post_effect["targets"]["ram_b"] == post_effect["targets"]["ram_a"]
     for entry in step_passes:
         guest_input = next(
             item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
@@ -1016,8 +1023,8 @@ def main() -> None:
         assert guest_input == {
             "sampler_name": "GuestImage",
             "location": "mcrv:guest_demo",
-            "width": 128,
-            "height": 128,
+            "width": 1024,
+            "height": 256,
         }
         dtb_input = next(
             item for item in entry["inputs"] if item["sampler_name"] == "DtbImage"
@@ -1028,6 +1035,30 @@ def main() -> None:
             "width": 1024,
             "height": 1,
         }
+        assert any(item["sampler_name"] == "Ram" for item in entry["inputs"])
+
+    commit_passes = [
+        entry for entry in post_effect["passes"]
+        if entry["fragment_shader"] == "mcrv:post/rv32_ram_commit"
+    ]
+    assert len(commit_passes) == 2
+    assert [entry["output"] for entry in commit_passes] == ["ram_b", "ram_a"]
+    for entry in commit_passes:
+        assert [item["sampler_name"] for item in entry["inputs"]] == [
+            "Ram", "State", "GuestImage"
+        ]
+    assert [entry["fragment_shader"] for entry in post_effect["passes"]] == [
+        "minecraft:post/blit",
+        "mcrv:post/rv32_step",
+        "mcrv:post/rv32_ram_commit",
+        "mcrv:post/rv32_step",
+        "mcrv:post/rv32_ram_commit",
+        "mcrv:post/rv32_display",
+    ]
+    display_pass = post_effect["passes"][-1]
+    assert [item["sampler_name"] for item in display_pass["inputs"]] == [
+        "Scene", "State", "Ram"
+    ]
 
     boot_effect_path = (
         project_root / "assets" / "mcrv" / "post_effect" / "rv32i_boot.json"
@@ -1043,10 +1074,26 @@ def main() -> None:
             item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
         )
         assert guest_input["location"] == "mcrv:guest_boot_probe"
+        assert (guest_input["width"], guest_input["height"]) == (1024, 256)
         dtb_input = next(
             item for item in entry["inputs"] if item["sampler_name"] == "DtbImage"
         )
         assert dtb_input["location"] == "mcrv:dtb_mcrv"
+    boot_commit_passes = [
+        entry for entry in boot_effect["passes"]
+        if entry["fragment_shader"] == "mcrv:post/rv32_ram_commit"
+    ]
+    assert len(boot_commit_passes) == 2
+    for entry in boot_commit_passes:
+        guest_input = next(
+            item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
+        )
+        assert guest_input == {
+            "sampler_name": "GuestImage",
+            "location": "mcrv:guest_boot_probe",
+            "width": 1024,
+            "height": 256,
+        }
 
     dtb_texture_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect" / "dtb_mcrv.png"
@@ -1083,7 +1130,7 @@ def main() -> None:
     boot_width, boot_height, boot_texture = decode_guest_texture(
         boot_texture_path.read_bytes()
     )
-    assert (boot_width, boot_height) == (128, 128)
+    assert (boot_width, boot_height) == (1024, 256)
     boot_descriptor_offset = len(boot_texture) - BOOT_DESCRIPTOR_WORDS * 4
     dtb_address, entry_point, load_address, magic = struct.unpack_from(
         "<4I", boot_texture, boot_descriptor_offset

@@ -2,6 +2,7 @@
 #extension GL_ARB_separate_shader_objects : require
 
 uniform sampler2D StateSampler;
+uniform sampler2D RamSampler;
 uniform sampler2D GuestImageSampler;
 uniform sampler2D DtbImageSampler;
 
@@ -10,12 +11,18 @@ layout(location = 0) in vec2 texCoord;
 layout(std140) uniform SamplerInfo {
     vec2 OutSize;
     vec2 StateSize;
+    vec2 RamSize;
+    vec2 GuestImageSize;
+    vec2 DtbImageSize;
 };
 
 layout(location = 0) out vec4 fragColor;
 
-const uint TEXTURE_WIDTH = 128u;
-const uint TEXTURE_WORDS = 16384u;
+const uint STATE_TEXTURE_WIDTH = 128u;
+const uint STATE_TEXTURE_WORDS = 16384u;
+const uint RAM_TEXTURE_WIDTH = 1024u;
+const uint RAM_TEXTURE_WORDS = 262144u;
+const uint RAM_MAGIC_INDEX = RAM_TEXTURE_WORDS - 1u;
 const uint DEVICE_BASE = 16300u;
 const uint CSR_BASE = 16316u;
 const uint REGISTER_BASE = 16348u;
@@ -24,12 +31,12 @@ const uint CYCLE_INDEX = 16381u;
 const uint PC_INDEX = 16382u;
 const uint MAGIC_INDEX = 16383u;
 const uint MAGIC_VALUE = 0x52563332u;
-const uint GUEST_DTB_INDEX = 16380u;
-const uint GUEST_ENTRY_INDEX = 16381u;
-const uint GUEST_LOAD_INDEX = 16382u;
-const uint GUEST_MAGIC_INDEX = 16383u;
+const uint GUEST_DTB_INDEX = RAM_TEXTURE_WORDS - 4u;
+const uint GUEST_ENTRY_INDEX = RAM_TEXTURE_WORDS - 3u;
+const uint GUEST_LOAD_INDEX = RAM_TEXTURE_WORDS - 2u;
+const uint GUEST_MAGIC_INDEX = RAM_TEXTURE_WORDS - 1u;
 const uint GUEST_MAGIC_VALUE = 0x4d435256u;
-const uint RAM_WORDS = DEVICE_BASE;
+const uint RAM_WORDS = RAM_MAGIC_INDEX;
 const uint RAM_BYTES = RAM_WORDS * 4u;
 const uint DTB_BYTES = 4096u;
 const uint INVALID_INDEX = 0xffffffffu;
@@ -97,6 +104,10 @@ const uint PLIC_SUPERVISOR_CLAIMED_INDEX = DEVICE_BASE + 15u;
 const uint PRIVILEGE_INDEX = CSR_BASE + 28u;
 const uint RESERVATION_ADDRESS_INDEX = CSR_BASE + 29u;
 const uint RESERVATION_VALID_INDEX = CSR_BASE + 30u;
+const uint RAM_WRITE_VALID_INDEX = CSR_BASE + 16u;
+const uint RAM_WRITE_ADDRESS_INDEX = CSR_BASE + 17u;
+const uint RAM_WRITE_VALUE_INDEX = CSR_BASE + 18u;
+const uint RAM_WRITE_WIDTH_INDEX = CSR_BASE + 19u;
 
 const uint PRIVILEGE_USER = 0u;
 const uint PRIVILEGE_SUPERVISOR = 1u;
@@ -109,8 +120,12 @@ const uint ACCESS_STORE = 2u;
 const uint STATUS_RUNNING = 0u;
 const uint STATUS_EBREAK = 1u;
 
-ivec2 wordCoordinate(uint index) {
-    return ivec2(int(index % TEXTURE_WIDTH), int(index / TEXTURE_WIDTH));
+ivec2 stateWordCoordinate(uint index) {
+    return ivec2(int(index % STATE_TEXTURE_WIDTH), int(index / STATE_TEXTURE_WIDTH));
+}
+
+ivec2 ramWordCoordinate(uint index) {
+    return ivec2(int(index % RAM_TEXTURE_WIDTH), int(index / RAM_TEXTURE_WIDTH));
 }
 
 uint decodeWord(vec4 encoded) {
@@ -129,17 +144,17 @@ vec4 encodeWord(uint word) {
 }
 
 uint readStateWord(uint index) {
-    if (index >= TEXTURE_WORDS) {
+    if (index >= STATE_TEXTURE_WORDS) {
         return 0u;
     }
-    return decodeWord(texelFetch(StateSampler, wordCoordinate(index), 0));
+    return decodeWord(texelFetch(StateSampler, stateWordCoordinate(index), 0));
 }
 
 uint readGuestWord(uint index) {
-    if (index >= TEXTURE_WORDS) {
+    if (index >= RAM_TEXTURE_WORDS) {
         return 0u;
     }
-    return decodeWord(texelFetch(GuestImageSampler, wordCoordinate(index), 0));
+    return decodeWord(texelFetch(GuestImageSampler, ramWordCoordinate(index), 0));
 }
 
 bool guestDescriptorPresent() {
@@ -163,7 +178,7 @@ uint readRegister(uint index) {
 }
 
 uint readMemoryWord(uint address) {
-    return readStateWord(address >> 2u);
+    return decodeWord(texelFetch(RamSampler, ramWordCoordinate(address >> 2u), 0));
 }
 
 bool ramAddressValid(uint address, uint width) {
@@ -478,13 +493,13 @@ uint initialWord(uint index) {
     if (index == REGISTER_BASE + 10u) return 0u;
     if (index == REGISTER_BASE + 11u) return guestDtbAddress();
     if (index >= REGISTER_BASE && index < REGISTER_BASE + 32u) return 0u;
-    return readGuestWord(index);
+    return 0u;
 }
 
 void main() {
     uvec2 outputSize = uvec2(OutSize + 0.5);
     uvec2 pixel = min(uvec2(texCoord * OutSize), outputSize - uvec2(1u));
-    uint outputIndex = pixel.y * TEXTURE_WIDTH + pixel.x;
+    uint outputIndex = pixel.y * STATE_TEXTURE_WIDTH + pixel.x;
 
     if (readStateWord(MAGIC_INDEX) != MAGIC_VALUE) {
         fragColor = encodeWord(initialWord(outputIndex));
@@ -1020,19 +1035,6 @@ void main() {
         if (outputIndex == csrStateIndex(CSR_STVAL)) outputWord = trapValue;
     }
 
-    if (writeMemory && ramAddressValid(memoryAddress, memoryWidth)
-            && outputIndex == (ramAddressOffset(memoryAddress) >> 2u)) {
-        uint shift = (memoryAddress & 3u) * 8u;
-        if (memoryWidth == 1u) {
-            uint mask = 0xffu << shift;
-            outputWord = (currentWord & ~mask) | ((memoryValue << shift) & mask);
-        } else if (memoryWidth == 2u) {
-            uint mask = 0xffffu << shift;
-            outputWord = (currentWord & ~mask) | ((memoryValue << shift) & mask);
-        } else {
-            outputWord = memoryValue;
-        }
-    }
     uint clintWriteIndex = clintStateIndex(memoryAddress);
     if (writeMemory && memoryWidth == 4u
             && clintWriteIndex != INVALID_INDEX && outputIndex == clintWriteIndex) {
@@ -1052,19 +1054,29 @@ void main() {
     }
     if (uartTransmit) {
         uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
-        uint uartBufferAddress = UART_TX_BUFFER_ADDRESS
-            + uartHead % UART_TX_BUFFER_BYTES;
-        if (outputIndex == (uartBufferAddress >> 2u)) {
-            uint shift = (uartBufferAddress & 3u) * 8u;
-            uint mask = 0xffu << shift;
-            outputWord = (currentWord & ~mask) | ((memoryValue << shift) & mask);
-        }
         if (outputIndex == UART_TX_HEAD_INDEX) outputWord = uartHead + 1u;
         if ((readStateWord(UART_IER_INDEX) & 0x2u) != 0u
                 && outputIndex == UART_PENDING_INDEX) {
             outputWord = 1u;
         }
     }
+
+    bool ramWrite = writeMemory && ramAddressValid(memoryAddress, memoryWidth);
+    uint ramWriteAddress = memoryAddress;
+    uint ramWriteValue = memoryValue;
+    uint ramWriteWidth = memoryWidth;
+    if (uartTransmit) {
+        uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
+        ramWrite = true;
+        ramWriteAddress = guestLoadAddress() + UART_TX_BUFFER_ADDRESS
+            + uartHead % UART_TX_BUFFER_BYTES;
+        ramWriteValue = memoryValue;
+        ramWriteWidth = 1u;
+    }
+    if (outputIndex == RAM_WRITE_VALID_INDEX) outputWord = ramWrite ? 1u : 0u;
+    if (outputIndex == RAM_WRITE_ADDRESS_INDEX) outputWord = ramWriteAddress;
+    if (outputIndex == RAM_WRITE_VALUE_INDEX) outputWord = ramWriteValue;
+    if (outputIndex == RAM_WRITE_WIDTH_INDEX) outputWord = ramWriteWidth;
 
     if (writeMemory && memoryWidth == 4u) {
         if (memoryAddress == PLIC_PRIORITY_ADDRESS
