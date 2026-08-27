@@ -2,7 +2,7 @@
 
 一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、CLINT、16550A 风格 UART、PLIC、异常与中断 delegation，以及 trap 返回路径。
 
-CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
+CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。guest binary 由资源包内的 RGBA8 纹理提供，初始化 pass 将纹理内容复制到 RAM。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
 ## 特性
 
@@ -31,8 +31,9 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - 约 120 指令/秒的 60 FPS 默认执行速度
 - PC、周期、状态、`x1`–`x8`、UART、显存与 RAM 活动仪表盘
 - 内置 RV32IMA、CSR、UART/PLIC、CLINT、interrupt、trap 自检与显存填充程序
-- demo 汇编器与汇编源/GLSL ROM 一致性检查
-- 平面 RV32 binary 到 GLSL ROM 的转换工具
+- demo 汇编器与汇编源/guest texture 一致性检查
+- 平面 RV32 binary 到 RGBA8 guest texture 的转换工具
+- 独立 guest image 与 shader CPU 核心
 - 原版资源包运行方式
 
 ## 运行环境
@@ -110,7 +111,7 @@ U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`�
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级、LR/SC reservation 和 CLINT 计时状态。
 
-当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括可加载 guest image、device tree、SBI 服务与启动内存布局。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括扩展 RAM texture、device tree 放置、`0x80000000` 启动映射与 SBI 固件。
 
 ## 平台设备与中断
 
@@ -173,6 +174,8 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 
 每个片元读取同一条指令、源寄存器与相关内存。输出坐标决定该片元负责 RAM 单词、目标寄存器或 CPU 元数据。这个结构将一次指令提交表达为整张纹理的并行状态转换。
 
+`guest_demo.png` 同样使用 128 × 128 RGBA8 布局。初始化时，单词索引 `0`–`16299` 从 guest texture 复制到 RAM，机器状态区由 shader 设置。当前入口 PC 为物理地址 `0x00000000`。
+
 ## CPU 状态码
 
 | 值 | 状态 |
@@ -192,13 +195,13 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 python tools/assemble_demo.py programs/framebuffer_demo.S -o framebuffer_demo.bin
 ```
 
-转换 binary：
+转换 binary 为 guest texture：
 
 ```powershell
-python tools/bin_to_glsl.py program.bin
+python tools/bin_to_texture.py framebuffer_demo.bin assets/mcrv/textures/effect/guest_demo.png
 ```
 
-命令输出一个 `initialProgramWord` GLSL 函数。使用输出内容替换 [`rv32_step.fsh`](assets/mcrv/shaders/post/rv32_step.fsh) 中的同名函数，然后重新打包资源包。
+转换器按小端顺序将每个 32 位单词写入一个 RGBA 像素。`rv32i.json` 将 `mcrv:guest_demo` 绑定为两个 CPU pass 的 `GuestImageSampler`。生成纹理后重新打包资源包。
 
 构建 ZIP：
 
@@ -208,7 +211,7 @@ powershell -ExecutionPolicy Bypass -File tools/package.ps1
 
 ## 验证
 
-参考执行测试会从汇编源重建内置机器码，并执行 RV32IMA、M/S CSR、UART/PLIC machine 与 supervisor external interrupt、CLINT machine timer interrupt、supervisor timer delegation、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
+参考执行测试会从汇编源重建内置机器码，校验 guest texture 与 post-effect 绑定，并执行 RV32IMA、M/S CSR、UART/PLIC machine 与 supervisor external interrupt、CLINT machine timer interrupt、supervisor timer delegation、M/S/U 特权转换、Sv32、MPRV、SUM/MXR、page fault delegation 与 U-mode 虚拟显存程序：
 
 ```powershell
 python tools/test_demo.py
@@ -217,14 +220,14 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA M/S/U OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions
+RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。
 
 ## 设计依据
 
-[PiMaker/rvc](https://github.com/pimaker/rvc) 展示了以整数纹理承载 RISC-V 状态、让片元并行提交 CPU tick 的架构。本项目将其 RV32M、RV32A、CSR 与特权执行语义移植到 Minecraft persistent post-effect target，并为 RGBA8 状态、GLSL 330、Minecraft 仪表盘和资源包生命周期提供适配层。第三方说明见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
+[PiMaker/rvc](https://github.com/pimaker/rvc) 展示了以整数纹理承载 RISC-V 状态、让片元并行提交 CPU tick 的架构。rvc 的 Linux 路径将平面 OpenSBI payload 转换为纹理，从 `0x80000000` 启动，并将 DTB 映射到 `0x1020` 后通过 `a1` 传入。本项目采用相同的镜像与执行状态分离思路，将 guest binary 作为 Minecraft `textures/effect` 输入，同时为 RGBA8 persistent target、GLSL 330、Minecraft 仪表盘和资源包生命周期提供适配层。第三方说明见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
 
 指令行为依据 [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)。Minecraft 资源格式依据 [25w16a Post Effect 更新](https://www.minecraft.net/en-us/article/minecraft-snapshot-25w16a) 与 [26.3 Snapshot 3 `/posteffect`](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-3)。
 

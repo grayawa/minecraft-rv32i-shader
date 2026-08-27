@@ -42,6 +42,12 @@
         {
           "sampler_name": "State",
           "target": "state_a"
+        },
+        {
+          "sampler_name": "GuestImage",
+          "location": "mcrv:guest_demo",
+          "width": 128,
+          "height": 128
         }
       ],
       "output": "state_b"
@@ -53,6 +59,12 @@
         {
           "sampler_name": "State",
           "target": "state_b"
+        },
+        {
+          "sampler_name": "GuestImage",
+          "location": "mcrv:guest_demo",
+          "width": 128,
+          "height": 128
         }
       ],
       "output": "state_a"

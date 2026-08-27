@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import re
+import json
 import struct
 from pathlib import Path
 
 from assemble_demo import assemble
+from bin_to_texture import decode_guest_texture
 
 
 MASK32 = 0xFFFFFFFF
@@ -888,20 +889,35 @@ def run_demo(
 
 
 def main() -> None:
-    shader_path = (
-        Path(__file__).resolve().parents[1]
-        / "assets" / "mcrv" / "shaders" / "post" / "rv32_step.fsh"
+    project_root = Path(__file__).resolve().parents[1]
+    texture_path = (
+        project_root / "assets" / "mcrv" / "textures" / "effect" / "guest_demo.png"
     )
-    shader_source = shader_path.read_text(encoding="utf-8")
-    shader_words = {
-        int(index): int(word, 16)
-        for index, word in re.findall(
-            r"if \(index == (\d+)u\) return 0x([0-9a-fA-F]+)u;", shader_source
-        )
-    }
-    program = [shader_words[index] for index in range(len(EXPECTED_PROGRAM))]
+    width, height, texture_bytes = decode_guest_texture(texture_path.read_bytes())
+    assert (width, height) == (128, 128)
+    program = list(struct.unpack_from(f"<{len(EXPECTED_PROGRAM)}I", texture_bytes))
     assert program == EXPECTED_PROGRAM
-    assembly_path = Path(__file__).resolve().parents[1] / "programs" / "framebuffer_demo.S"
+    assert texture_bytes[len(program) * 4 :] == bytes(len(texture_bytes) - len(program) * 4)
+
+    post_effect_path = project_root / "assets" / "mcrv" / "post_effect" / "rv32i.json"
+    post_effect = json.loads(post_effect_path.read_text(encoding="utf-8"))
+    step_passes = [
+        entry for entry in post_effect["passes"]
+        if entry["fragment_shader"] == "mcrv:post/rv32_step"
+    ]
+    assert len(step_passes) == 2
+    for entry in step_passes:
+        guest_input = next(
+            item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
+        )
+        assert guest_input == {
+            "sampler_name": "GuestImage",
+            "location": "mcrv:guest_demo",
+            "width": 128,
+            "height": 128,
+        }
+
+    assembly_path = project_root / "programs" / "framebuffer_demo.S"
     assert assemble(assembly_path.read_text(encoding="utf-8")) == EXPECTED_PROGRAM
     verify_high_multiply()
     verify_sv32_translation()
@@ -963,7 +979,7 @@ def main() -> None:
     assert cycle == 2815
     assert status == 1
     print(
-        "RV32IMA M/S/U OK: M/S UART/PLIC external interrupts, CLINT timer "
+        "RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer "
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions"
     )
 
