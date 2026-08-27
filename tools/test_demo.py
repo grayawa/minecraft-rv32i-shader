@@ -7,7 +7,7 @@ import struct
 from pathlib import Path
 
 from assemble_demo import assemble
-from bin_to_texture import decode_guest_texture
+from bin_to_texture import BOOT_DESCRIPTOR_WORDS, BOOT_MAGIC, decode_guest_texture
 
 
 MASK32 = 0xFFFFFFFF
@@ -888,6 +888,47 @@ def run_demo(
     return registers, memory, csrs, clint, uart, plic, pc, cycle, status, privilege
 
 
+def run_boot_probe(program: list[int], load_address: int, entry_point: int,
+                   dtb_address: int) -> tuple[bytes, int, int]:
+    registers = [0] * 32
+    registers[11] = dtb_address
+    pc = entry_point
+    uart = bytearray()
+    status = 0
+    cycles = 0
+    while status == 0 and cycles < 100:
+        offset = pc - load_address
+        assert offset >= 0 and offset % 4 == 0
+        instruction = program[offset // 4]
+        next_pc = (pc + 4) & MASK32
+        opcode = instruction & 0x7F
+        rd = (instruction >> 7) & 0x1F
+        funct3 = (instruction >> 12) & 7
+        rs1 = (instruction >> 15) & 0x1F
+        rs2 = (instruction >> 20) & 0x1F
+        if opcode == 0x37:
+            registers[rd] = instruction & 0xFFFFF000
+        elif opcode == 0x13 and funct3 == 0:
+            registers[rd] = (registers[rs1] + sign_extend(instruction >> 20, 12)) & MASK32
+        elif opcode == 0x63 and funct3 == 1:
+            if registers[rs1] != registers[rs2]:
+                next_pc = (pc + branch_immediate(instruction)) & MASK32
+        elif opcode == 0x23 and funct3 == 0:
+            immediate = ((instruction >> 25) << 5) | ((instruction >> 7) & 0x1F)
+            address = (registers[rs1] + sign_extend(immediate, 12)) & MASK32
+            assert address == UART_BASE
+            uart.append(registers[rs2] & 0xFF)
+        elif instruction == 0x00100073:
+            next_pc = pc
+            status = 1
+        else:
+            raise AssertionError(f"boot probe instruction {instruction:#010x}")
+        registers[0] = 0
+        pc = next_pc
+        cycles += 1
+    return bytes(uart), pc, status
+
+
 def main() -> None:
     project_root = Path(__file__).resolve().parents[1]
     texture_path = (
@@ -897,7 +938,13 @@ def main() -> None:
     assert (width, height) == (128, 128)
     program = list(struct.unpack_from(f"<{len(EXPECTED_PROGRAM)}I", texture_bytes))
     assert program == EXPECTED_PROGRAM
-    assert texture_bytes[len(program) * 4 :] == bytes(len(texture_bytes) - len(program) * 4)
+    descriptor_offset = len(texture_bytes) - BOOT_DESCRIPTOR_WORDS * 4
+    assert texture_bytes[len(program) * 4 : descriptor_offset] == bytes(
+        descriptor_offset - len(program) * 4
+    )
+    assert struct.unpack_from("<4I", texture_bytes, descriptor_offset) == (
+        0, 0, 0, BOOT_MAGIC
+    )
 
     post_effect_path = project_root / "assets" / "mcrv" / "post_effect" / "rv32i.json"
     post_effect = json.loads(post_effect_path.read_text(encoding="utf-8"))
@@ -916,9 +963,70 @@ def main() -> None:
             "width": 128,
             "height": 128,
         }
+        dtb_input = next(
+            item for item in entry["inputs"] if item["sampler_name"] == "DtbImage"
+        )
+        assert dtb_input == {
+            "sampler_name": "DtbImage",
+            "location": "mcrv:dtb_empty",
+            "width": 1024,
+            "height": 1,
+        }
+
+    boot_effect_path = (
+        project_root / "assets" / "mcrv" / "post_effect" / "rv32i_boot.json"
+    )
+    boot_effect = json.loads(boot_effect_path.read_text(encoding="utf-8"))
+    boot_step_passes = [
+        entry for entry in boot_effect["passes"]
+        if entry["fragment_shader"] == "mcrv:post/rv32_step"
+    ]
+    assert len(boot_step_passes) == 2
+    for entry in boot_step_passes:
+        guest_input = next(
+            item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
+        )
+        assert guest_input["location"] == "mcrv:guest_boot_probe"
+
+    dtb_texture_path = (
+        project_root / "assets" / "mcrv" / "textures" / "effect" / "dtb_empty.png"
+    )
+    dtb_width, dtb_height, dtb_texture = decode_guest_texture(
+        dtb_texture_path.read_bytes()
+    )
+    assert (dtb_width, dtb_height) == (1024, 1)
+    assert dtb_texture == bytes(4096)
 
     assembly_path = project_root / "programs" / "framebuffer_demo.S"
     assert assemble(assembly_path.read_text(encoding="utf-8")) == EXPECTED_PROGRAM
+
+    boot_source = (project_root / "programs" / "boot_probe.S").read_text(encoding="utf-8")
+    boot_program = assemble(boot_source)
+    boot_texture_path = (
+        project_root / "assets" / "mcrv" / "textures" / "effect"
+        / "guest_boot_probe.png"
+    )
+    boot_width, boot_height, boot_texture = decode_guest_texture(
+        boot_texture_path.read_bytes()
+    )
+    assert (boot_width, boot_height) == (128, 128)
+    boot_descriptor_offset = len(boot_texture) - BOOT_DESCRIPTOR_WORDS * 4
+    dtb_address, entry_point, load_address, magic = struct.unpack_from(
+        "<4I", boot_texture, boot_descriptor_offset
+    )
+    assert (dtb_address, entry_point, load_address, magic) == (
+        0x1020, 0x80000000, 0x80000000, BOOT_MAGIC
+    )
+    texture_boot_program = list(
+        struct.unpack_from(f"<{len(boot_program)}I", boot_texture)
+    )
+    assert texture_boot_program == boot_program
+    uart_output, boot_pc, boot_status = run_boot_probe(
+        boot_program, load_address, entry_point, dtb_address
+    )
+    assert uart_output == b"BOOT A1 OK"
+    assert boot_pc == 0x80000060
+    assert boot_status == 1
     verify_high_multiply()
     verify_sv32_translation()
     verify_interrupt_logic()
@@ -980,7 +1088,8 @@ def main() -> None:
     assert status == 1
     print(
         "RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer "
-        "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions"
+        "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
+        "0x80000000 boot descriptor and a0/a1 probe"
     )
 
 

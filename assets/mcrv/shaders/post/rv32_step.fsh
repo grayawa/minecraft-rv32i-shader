@@ -3,6 +3,7 @@
 
 uniform sampler2D StateSampler;
 uniform sampler2D GuestImageSampler;
+uniform sampler2D DtbImageSampler;
 
 layout(location = 0) in vec2 texCoord;
 
@@ -23,8 +24,14 @@ const uint CYCLE_INDEX = 16381u;
 const uint PC_INDEX = 16382u;
 const uint MAGIC_INDEX = 16383u;
 const uint MAGIC_VALUE = 0x52563332u;
+const uint GUEST_DTB_INDEX = 16380u;
+const uint GUEST_ENTRY_INDEX = 16381u;
+const uint GUEST_LOAD_INDEX = 16382u;
+const uint GUEST_MAGIC_INDEX = 16383u;
+const uint GUEST_MAGIC_VALUE = 0x4d435256u;
 const uint RAM_WORDS = DEVICE_BASE;
 const uint RAM_BYTES = RAM_WORDS * 4u;
+const uint DTB_BYTES = 4096u;
 const uint INVALID_INDEX = 0xffffffffu;
 
 const uint CLINT_MSIP_ADDRESS = 0x02000000u;
@@ -129,10 +136,26 @@ uint readStateWord(uint index) {
 }
 
 uint readGuestWord(uint index) {
-    if (index >= RAM_WORDS) {
+    if (index >= TEXTURE_WORDS) {
         return 0u;
     }
     return decodeWord(texelFetch(GuestImageSampler, wordCoordinate(index), 0));
+}
+
+bool guestDescriptorPresent() {
+    return readGuestWord(GUEST_MAGIC_INDEX) == GUEST_MAGIC_VALUE;
+}
+
+uint guestLoadAddress() {
+    return guestDescriptorPresent() ? readGuestWord(GUEST_LOAD_INDEX) : 0u;
+}
+
+uint guestEntryPoint() {
+    return guestDescriptorPresent() ? readGuestWord(GUEST_ENTRY_INDEX) : 0u;
+}
+
+uint guestDtbAddress() {
+    return guestDescriptorPresent() ? readGuestWord(GUEST_DTB_INDEX) : 0u;
 }
 
 uint readRegister(uint index) {
@@ -141,6 +164,27 @@ uint readRegister(uint index) {
 
 uint readMemoryWord(uint address) {
     return readStateWord(address >> 2u);
+}
+
+bool ramAddressValid(uint address, uint width) {
+    uint base = guestLoadAddress();
+    return width > 0u && width <= RAM_BYTES && address >= base
+        && address - base <= RAM_BYTES - width;
+}
+
+uint ramAddressOffset(uint address) {
+    return address - guestLoadAddress();
+}
+
+bool dtbAddressValid(uint address, uint width) {
+    uint base = guestDtbAddress();
+    return base != 0u && width > 0u && width <= DTB_BYTES && address >= base
+        && address - base <= DTB_BYTES - width;
+}
+
+uint readDtbWord(uint address) {
+    uint offset = address - guestDtbAddress();
+    return decodeWord(texelFetch(DtbImageSampler, ivec2(int(offset >> 2u), 0), 0));
 }
 
 uint clintStateIndex(uint address) {
@@ -184,13 +228,15 @@ bool plicAccessValid(uint address, uint width) {
         || address == PLIC_SUPERVISOR_CLAIM_COMPLETE_ADDRESS);
 }
 
-bool physicalAccessValid(uint address, uint width) {
-    if (width > 0u && address <= RAM_BYTES - width) return true;
+bool physicalAccessValid(uint address, uint width, bool writeAccess) {
+    if (ramAddressValid(address, width)) return true;
+    if (!writeAccess && dtbAddressValid(address, width)) return true;
     return (width == 4u && clintStateIndex(address) != INVALID_INDEX)
         || uartAccessValid(address, width) || plicAccessValid(address, width);
 }
 
 uint readPhysicalWord(uint address) {
+    if (dtbAddressValid(address, 1u)) return readDtbWord(address);
     uint clintIndex = clintStateIndex(address);
     if (clintIndex != INVALID_INDEX) return readStateWord(clintIndex);
     if (uartAccessValid(address, 1u)) {
@@ -230,7 +276,7 @@ uint readPhysicalWord(uint address) {
     if (address == PLIC_SUPERVISOR_CLAIM_COMPLETE_ADDRESS) {
         return plicInterruptEligible(true) ? UART_INTERRUPT_SOURCE : 0u;
     }
-    return readMemoryWord(address);
+    return readMemoryWord(ramAddressOffset(address));
 }
 
 uint signExtend(uint value, uint bits) {
@@ -349,11 +395,11 @@ bool translateAddress(uint virtualAddress, uint accessType, uint privilege,
     uint vpn0 = (virtualAddress >> 12u) & 0x3ffu;
     uint pageOffset = virtualAddress & 0xfffu;
     uint pteAddress = tableAddress + vpn1 * 4u;
-    if (pteAddress < tableAddress || pteAddress > RAM_BYTES - 4u) {
+    if (pteAddress < tableAddress || !ramAddressValid(pteAddress, 4u)) {
         return false;
     }
 
-    uint pte = readMemoryWord(pteAddress);
+    uint pte = readPhysicalWord(pteAddress);
     bool valid = (pte & 0x1u) != 0u;
     bool readable = (pte & 0x2u) != 0u;
     bool writable = (pte & 0x4u) != 0u;
@@ -366,10 +412,10 @@ bool translateAddress(uint virtualAddress, uint accessType, uint privilege,
     if (!readable && !executable) {
         tableAddress = (pte >> 10u) << 12u;
         pteAddress = tableAddress + vpn0 * 4u;
-        if (pteAddress < tableAddress || pteAddress > RAM_BYTES - 4u) {
+        if (pteAddress < tableAddress || !ramAddressValid(pteAddress, 4u)) {
             return false;
         }
-        pte = readMemoryWord(pteAddress);
+        pte = readPhysicalWord(pteAddress);
         valid = (pte & 0x1u) != 0u;
         readable = (pte & 0x2u) != 0u;
         writable = (pte & 0x4u) != 0u;
@@ -421,7 +467,7 @@ uint selectInterruptCause(uint pending) {
 
 uint initialWord(uint index) {
     if (index == MAGIC_INDEX) return MAGIC_VALUE;
-    if (index == PC_INDEX) return 0u;
+    if (index == PC_INDEX) return guestEntryPoint();
     if (index == CYCLE_INDEX) return 0u;
     if (index == STATUS_INDEX) return STATUS_RUNNING;
     if (index == PRIVILEGE_INDEX) return PRIVILEGE_MACHINE;
@@ -429,6 +475,8 @@ uint initialWord(uint index) {
             || index == CLINT_MTIMECMP_HIGH_INDEX) return 0xffffffffu;
     if (index == PLIC_PRIORITY_INDEX) return 1u;
     if (index >= DEVICE_BASE && index < REGISTER_BASE) return 0u;
+    if (index == REGISTER_BASE + 10u) return 0u;
+    if (index == REGISTER_BASE + 11u) return guestDtbAddress();
     if (index >= REGISTER_BASE && index < REGISTER_BASE + 32u) return 0u;
     return readGuestWord(index);
 }
@@ -513,8 +561,8 @@ void main() {
     uint instructionAddress = 0u;
     bool fetchTranslated = fetchAligned
         && translateAddress(pc, ACCESS_INSTRUCTION, currentPrivilege, instructionAddress);
-    bool fetchInRange = fetchTranslated && instructionAddress <= RAM_BYTES - 4u;
-    uint instruction = fetchInRange ? readMemoryWord(instructionAddress) : 0u;
+    bool fetchInRange = fetchTranslated && ramAddressValid(instructionAddress, 4u);
+    uint instruction = fetchInRange ? readPhysicalWord(instructionAddress) : 0u;
 
     if (takeTrap) {
         // Interrupts are taken between instructions, preserving the current PC.
@@ -623,7 +671,7 @@ void main() {
             uint physicalAddress = 0u;
             bool translated = width > 0u && aligned
                 && translateAddress(address, ACCESS_LOAD, dataPrivilege, physicalAddress);
-            bool inRange = translated && physicalAccessValid(physicalAddress, width);
+            bool inRange = translated && physicalAccessValid(physicalAddress, width, false);
 
             if (width == 0u) {
                 legal = false;
@@ -667,7 +715,7 @@ void main() {
             uint physicalAddress = 0u;
             bool translated = width > 0u && aligned
                 && translateAddress(address, ACCESS_STORE, dataPrivilege, physicalAddress);
-            bool inRange = translated && physicalAccessValid(physicalAddress, width);
+            bool inRange = translated && physicalAccessValid(physicalAddress, width, true);
 
             if (width == 0u) {
                 legal = false;
@@ -746,7 +794,7 @@ void main() {
                 && translateAddress(address,
                     loadReservation ? ACCESS_LOAD : ACCESS_STORE,
                     dataPrivilege, physicalAddress);
-            bool inRange = translated && physicalAddress <= RAM_BYTES - 4u;
+            bool inRange = translated && ramAddressValid(physicalAddress, 4u);
 
             if (funct3 != 2u) {
                 legal = false;
@@ -972,8 +1020,8 @@ void main() {
         if (outputIndex == csrStateIndex(CSR_STVAL)) outputWord = trapValue;
     }
 
-    if (writeMemory && memoryAddress < RAM_BYTES
-            && outputIndex == (memoryAddress >> 2u)) {
+    if (writeMemory && ramAddressValid(memoryAddress, memoryWidth)
+            && outputIndex == (ramAddressOffset(memoryAddress) >> 2u)) {
         uint shift = (memoryAddress & 3u) * 8u;
         if (memoryWidth == 1u) {
             uint mask = 0xffu << shift;

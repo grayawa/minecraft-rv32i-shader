@@ -2,7 +2,7 @@
 
 一个完全运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。当前核心覆盖 RV32IMA、Zicsr、M/S/U 特权级、Sv32 虚拟内存、CLINT、16550A 风格 UART、PLIC、异常与中断 delegation，以及 trap 返回路径。
 
-CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。guest binary 由资源包内的 RGBA8 纹理提供，初始化 pass 将纹理内容复制到 RAM。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
+CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 128 × 128 persistent render target 中。guest binary 由资源包内的 RGBA8 纹理提供，纹理尾部的 boot descriptor 指定 RAM 物理基址、入口 PC 与 DTB 地址。初始化 pass 将纹理内容复制到 RAM，并按 RISC-V 启动约定设置 `a0` 与 `a1`。两个 GPU pass 在每个画面帧完成两条 RISC-V 指令，显示 pass 将机器状态与 32 × 18 显存合成为屏幕仪表盘。
 
 ## 特性
 
@@ -34,6 +34,9 @@ CPU、寄存器、PC、RAM、CSR、显存和执行状态全部保存在两个 12
 - demo 汇编器与汇编源/guest texture 一致性检查
 - 平面 RV32 binary 到 RGBA8 guest texture 的转换工具
 - 独立 guest image 与 shader CPU 核心
+- 可配置 load address、entry point 与 DTB address
+- `0x80000000` boot probe 与 `a0`/`a1` 启动寄存器检查
+- 4 KiB 只读 DTB texture window
 - 原版资源包运行方式
 
 ## 运行环境
@@ -111,7 +114,7 @@ U-mode 通过虚拟地址 `0x40003000`–`0x400038ff` 向物理显存 `0x1000`�
 
 CSR bank 包含 `mstatus`、`medeleg`、`mideleg`、`mie`、`mtvec`、`mscratch`、`mepc`、`mcause`、`mtval`、`mip`、`sstatus`、`sie`、`stvec`、`sscratch`、`sepc`、`scause`、`stval`、`sip` 和 `satp`。`sstatus`、`sie` 与 `sip` 作为对应机器 CSR 的掩码视图。`misa` 返回 RV32IMA 能力位，周期计数器和 hart ID 通过对应 CSR 读取。机器状态区保存当前特权级、LR/SC reservation 和 CLINT 计时状态。
 
-当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括扩展 RAM texture、device tree 放置、`0x80000000` 启动映射与 SBI 固件。
+当前执行环境覆盖 M/S/U 特权级、Sv32 页表遍历、`MPRV`、`SUM`、`MXR`，异常原因 `0`、`1`、`2`、`4`–`9`、`11`–`13`、`15`，以及中断原因 `1`、`3`、`5`、`7`、`9`、`11` 的 trap entry。Linux 启动路径的下一层包括扩展 RAM texture、平台 DTB、OpenSBI payload 与 SBI 服务。
 
 ## 平台设备与中断
 
@@ -174,7 +177,16 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 
 每个片元读取同一条指令、源寄存器与相关内存。输出坐标决定该片元负责 RAM 单词、目标寄存器或 CPU 元数据。这个结构将一次指令提交表达为整张纹理的并行状态转换。
 
-`guest_demo.png` 同样使用 128 × 128 RGBA8 布局。初始化时，单词索引 `0`–`16299` 从 guest texture 复制到 RAM，机器状态区由 shader 设置。当前入口 PC 为物理地址 `0x00000000`。
+guest image 同样使用 128 × 128 RGBA8 布局。初始化时，单词索引 `0`–`16299` 从 guest texture 复制到 RAM，机器状态区由 shader 设置。guest texture 尾部保存四个 32 位 boot descriptor 单词：
+
+| guest 单词索引 | 内容 |
+| --- | --- |
+| `16380` | DTB 物理地址 |
+| `16381` | 入口 PC |
+| `16382` | RAM 物理基址 |
+| `16383` | descriptor magic `0x4D435256` |
+
+复位时，`a0` 保存 hart ID `0`，`a1` 保存 DTB 物理地址。`DtbImageSampler` 提供 1024 个 RGBA 像素，对应 4 KiB 只读 DTB window。内置 framebuffer demo 使用物理基址与入口 `0x00000000`。boot probe 使用物理基址与入口 `0x80000000`，并将 `a1` 设为 `0x00001020`。
 
 ## CPU 状态码
 
@@ -187,7 +199,7 @@ state_a → RISC-V tick → state_b → RISC-V tick → state_a → dashboard
 
 ## 加载自己的程序
 
-模拟器从物理字节地址零开始执行平面 RV32 binary。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。物理 RAM 范围为 `0x00000000`–`0x0000feaf`，平台设备使用上表列出的 MMIO 地址。
+boot descriptor 决定平面 RV32 binary 的物理加载基址和入口 PC。M-mode 可以配置 `satp`，通过 `MRET` 进入 S-mode，再通过 `SRET` 进入 U-mode。RAM window 长度为 65,200 字节，平台设备使用上表列出的 MMIO 地址。
 
 仓库内置的小型两遍汇编器支持 demo 使用的 RV32IMA/Zicsr 子集、标签和 `.org`：
 
@@ -198,10 +210,27 @@ python tools/assemble_demo.py programs/framebuffer_demo.S -o framebuffer_demo.bi
 转换 binary 为 guest texture：
 
 ```powershell
-python tools/bin_to_texture.py framebuffer_demo.bin assets/mcrv/textures/effect/guest_demo.png
+python tools/bin_to_texture.py framebuffer_demo.bin assets/mcrv/textures/effect/guest_demo.png `
+  --load-address 0x0 --entry-point 0x0 --dtb-address 0x0
 ```
 
-转换器按小端顺序将每个 32 位单词写入一个 RGBA 像素。`rv32i.json` 将 `mcrv:guest_demo` 绑定为两个 CPU pass 的 `GuestImageSampler`。生成纹理后重新打包资源包。
+转换器按小端顺序将每个 32 位单词写入一个 RGBA 像素，并在纹理尾部写入 boot descriptor。`rv32i.json` 将 `mcrv:guest_demo` 绑定为两个 CPU pass 的 `GuestImageSampler`。生成纹理后重新打包资源包。
+
+DTB binary 使用 raw texture 模式：
+
+```powershell
+python tools/bin_to_texture.py board.dtb assets/mcrv/textures/effect/board_dtb.png `
+  --width 1024 --height 1 --raw
+```
+
+`rv32i_boot` 提供 `0x80000000` 启动探针：
+
+```mcfunction
+/posteffect remove @s mcrv:rv32i
+/posteffect add @s mcrv:rv32i_boot
+```
+
+探针验证 `a0=0` 与 `a1=0x1020`，随后通过 UART 输出 `BOOT A1 OK` 并停在 PC `0x80000060`。
 
 构建 ZIP：
 
@@ -220,7 +249,7 @@ python tools/test_demo.py
 预期输出：
 
 ```text
-RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions
+RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; 0x80000000 boot descriptor and a0/a1 probe
 ```
 
 [`tools/ShadercCheck.java`](tools/ShadercCheck.java) 使用 Minecraft 26.3-snapshot-5 附带的 LWJGL ShaderC 3.4.2 编译两个片元着色器。发布流程还会解析资源包 JSON、检查 ZIP 根目录并对比安装副本的 SHA-256。

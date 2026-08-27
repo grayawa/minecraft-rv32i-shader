@@ -45,7 +45,7 @@
         },
         {
           "sampler_name": "GuestImage",
-          "location": "mcrv:guest_demo",
+          "location": "mcrv:guest_boot_probe",
           "width": 128,
           "height": 128
         },
@@ -68,7 +68,7 @@
         },
         {
           "sampler_name": "GuestImage",
-          "location": "mcrv:guest_demo",
+          "location": "mcrv:guest_boot_probe",
           "width": 128,
           "height": 128
         },
@@ -98,3 +98,4 @@
     }
   ]
 }
+
