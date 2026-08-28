@@ -19,6 +19,7 @@ from build_dtb import (
     platform_tree,
     render_dts,
 )
+from romfs import checksum, entry_name, header_name_end, root_entries
 
 
 MASK32 = 0xFFFFFFFF
@@ -283,6 +284,113 @@ def branch_immediate(instruction: int) -> int:
         | (((instruction >> 8) & 0xF) << 1)
     )
     return sign_extend(value, 13)
+
+
+def jump_immediate(instruction: int) -> int:
+    value = (
+        (((instruction >> 31) & 1) << 20)
+        | (((instruction >> 12) & 0xFF) << 12)
+        | (((instruction >> 20) & 1) << 11)
+        | (((instruction >> 21) & 0x3FF) << 1)
+    )
+    return sign_extend(value, 21)
+
+
+def run_fibonacci_elf(executable: bytes) -> tuple[bytes, int]:
+    """Execute the bundled syscall-only RV32 user program."""
+    header = struct.unpack_from("<16sHHIIIIIHHHHHH", executable)
+    assert header[0][:4] == b"\x7fELF"
+    assert header[1:3] == (2, 243)
+    entry_point = header[4]
+    program_header_offset = header[5]
+    program_header_size = header[9]
+    program_header_count = header[10]
+    memory = bytearray(0x20000)
+    for index in range(program_header_count):
+        offset = program_header_offset + index * program_header_size
+        kind, file_offset, virtual_address, _, file_size, memory_size, _, _ = (
+            struct.unpack_from("<8I", executable, offset)
+        )
+        if kind == 1:
+            memory[virtual_address : virtual_address + file_size] = (
+                executable[file_offset : file_offset + file_size]
+            )
+            memory[virtual_address + file_size : virtual_address + memory_size] = (
+                bytes(memory_size - file_size)
+            )
+
+    registers = [0] * 32
+    pc = entry_point
+    output = bytearray()
+    for _cycle in range(20_000):
+        instruction = struct.unpack_from("<I", memory, pc)[0]
+        opcode = instruction & 0x7F
+        rd = (instruction >> 7) & 0x1F
+        funct3 = (instruction >> 12) & 7
+        rs1 = (instruction >> 15) & 0x1F
+        rs2 = (instruction >> 20) & 0x1F
+        funct7 = instruction >> 25
+        next_pc = pc + 4
+        if opcode == 0x17:
+            registers[rd] = (pc + (instruction & 0xFFFFF000)) & MASK32
+        elif opcode == 0x13 and funct3 == 0:
+            immediate = sign_extend(instruction >> 20, 12)
+            registers[rd] = (registers[rs1] + immediate) & MASK32
+        elif opcode == 0x33 and funct7 == 0 and funct3 == 0:
+            registers[rd] = (registers[rs1] + registers[rs2]) & MASK32
+        elif opcode == 0x33 and funct7 == 1 and funct3 in (5, 7):
+            registers[rd] = execute_rv32m(
+                funct3, registers[rs1], registers[rs2]
+            )
+        elif opcode == 0x23 and funct3 == 0:
+            immediate = ((instruction >> 25) << 5) | ((instruction >> 7) & 0x1F)
+            address = (registers[rs1] + sign_extend(immediate, 12)) & MASK32
+            memory[address] = registers[rs2] & 0xFF
+        elif opcode == 0x63 and funct3 in (0, 1):
+            equal = registers[rs1] == registers[rs2]
+            if equal == (funct3 == 0):
+                next_pc = (pc + branch_immediate(instruction)) & MASK32
+        elif opcode == 0x6F:
+            registers[rd] = next_pc
+            next_pc = (pc + jump_immediate(instruction)) & MASK32
+        elif opcode == 0x67 and funct3 == 0:
+            immediate = sign_extend(instruction >> 20, 12)
+            target = (registers[rs1] + immediate) & ~1
+            registers[rd] = next_pc
+            next_pc = target
+        elif opcode == 0x73 and instruction == 0x00000073:
+            syscall = registers[17]
+            if syscall == 64:
+                assert registers[10] == 1
+                address = registers[11]
+                length = registers[12]
+                output.extend(memory[address : address + length])
+                registers[10] = length
+            elif syscall == 93:
+                return bytes(output), registers[10]
+            else:
+                raise AssertionError(f"unexpected syscall {syscall}")
+        else:
+            raise AssertionError(f"unexpected Fibonacci instruction {instruction:08x}")
+        registers[0] = 0
+        pc = next_pc
+    raise AssertionError("Fibonacci program exceeded its reference cycle budget")
+
+
+def verify_fibonacci_elf(executable: bytes) -> None:
+    output, status = run_fibonacci_elf(executable)
+    values: list[int] = []
+    left, right = 0, 1
+    for _ in range(48):
+        values.append(left)
+        left, right = right, left + right
+    expected = b"FIBONACCI USER PROGRAM" + b" " * 9 + b"\n"
+    expected += b"".join(
+        f"F{index:02d} = {value:010d}".encode("ascii") + b" " * 15 + b"\n"
+        for index, value in enumerate(values)
+    )
+    assert status == 0
+    assert output == expected
 
 
 def translate_address(
@@ -1008,10 +1116,14 @@ def main() -> None:
         project_root / "assets" / "mcrv" / "shaders" / "post" / "rv32_display.fsh"
     ).read_text(encoding="utf-8")
     assert "const uint UART_TX_BUFFER_OFFSET = RAM_BYTES;" in step_shader
+    assert "const uint UART_TX_BUFFER_BYTES = 1024u;" in step_shader
+    assert "const uint UART_LINE_LENGTH_BASE = 4871u;" in step_shader
     assert "if (dtbAddressValid(address, width)) return true;" in step_shader
     assert "const uint LINUX_TIMER_DIVIDER = 40u;" in step_shader
     assert "outputWord = readStateWord(csrStateIndex(CSR_MIP)) & ~0x000000a0u;" in step_shader
     assert "const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;" in display_shader
+    assert "const uint UART_TX_BUFFER_BYTES = 1024u;" in display_shader
+    assert "const uint UART_TERMINAL_BYTES = 640u;" in display_shader
 
     texture_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect" / "guest_demo.png"
@@ -1169,10 +1281,30 @@ def main() -> None:
     )
     assert (mtd_width, mtd_height) == (4096, 3447)
     rootfs_size = int.from_bytes(mtd_texture[8:12], "big")
-    assert rootfs_size == 56_466_528
+    assert rootfs_size == 56_471_216
     assert hashlib.sha256(mtd_texture[:rootfs_size]).hexdigest() == (
-        "b8e1655993bb05358263d39863937f0f643a616072fe0079d1ca338028be5f3d"
+        "1f8adf1c3cc689d68004f362a268d1e9013d337d42a97f5641272a2c1fa86044"
     )
+    rootfs = mtd_texture[:rootfs_size]
+    assert checksum(rootfs[:512]) == 0
+    entries = root_entries(rootfs)
+    named_entries = {entry_name(rootfs, offset): offset for offset in entries}
+    init_offset = named_entries["rvcinit"]
+    init_size = struct.unpack_from(">I", rootfs, init_offset + 8)[0]
+    init_data_offset = header_name_end(rootfs, init_offset)
+    init_script = rootfs[init_data_offset : init_data_offset + init_size]
+    assert init_script == (project_root / "guest" / "rvcinit").read_bytes()
+    assert init_script.index(b"/fibonacci") < init_script.index(b"getty")
+    fibonacci_offset = named_entries["fibonacci"]
+    fibonacci_info = struct.unpack_from(">I", rootfs, fibonacci_offset)[0] & 15
+    fibonacci_size = struct.unpack_from(">I", rootfs, fibonacci_offset + 8)[0]
+    fibonacci_data_offset = header_name_end(rootfs, fibonacci_offset)
+    fibonacci = rootfs[
+        fibonacci_data_offset : fibonacci_data_offset + fibonacci_size
+    ]
+    assert fibonacci_info == 10
+    assert fibonacci == (project_root / "guest" / "fibonacci").read_bytes()
+    verify_fibonacci_elf(fibonacci)
 
     dtb_texture_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect" / "dtb_mcrv.png"
@@ -1290,7 +1422,8 @@ def main() -> None:
         "RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer "
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
         "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
-        "12 MiB RAM DTB, 56,466,528-byte ROMFS, rvc timer semantics and 70-pass profile"
+        "12 MiB RAM DTB, Fibonacci ROMFS user program, 1 KiB UART ring, "
+        "rvc timer semantics and 70-pass profile"
     )
 
 

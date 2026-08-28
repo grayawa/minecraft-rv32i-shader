@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 from bin_to_texture import encode_guest_texture
+from romfs import patch_rootfs
 
 
 GUEST_WIDTH = 2048
@@ -106,6 +107,11 @@ def main() -> None:
         raise ValueError("rootfs image must use ROMFS encoding")
     rootfs_size = int.from_bytes(rootfs[8:12], "big")
     rootfs = rootfs[:rootfs_size]
+    rootfs = patch_rootfs(
+        rootfs,
+        (project / "guest" / "rvcinit").read_bytes(),
+        (project / "guest" / "fibonacci").read_bytes(),
+    )
     (effect / "mtd_linux.png").write_bytes(
         encode_guest_texture(rootfs, MTD_WIDTH, MTD_HEIGHT, boot_descriptor=False)
     )

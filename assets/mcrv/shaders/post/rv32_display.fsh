@@ -29,8 +29,11 @@ const uint CSR_MCAUSE_INDEX = 0x342u;
 const uint CSR_MTVAL_INDEX = 0x343u;
 const uint FRAMEBUFFER_BASE = 1024u;
 const uint UART_TX_HEAD_INDEX = 16307u;
+const uint UART_LINE_LENGTH_BASE = 4871u;
+const uint UART_LINE_COUNT = 32u;
 const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;
-const uint UART_TX_BUFFER_BYTES = 256u;
+const uint UART_TX_BUFFER_BYTES = 1024u;
+const uint UART_TERMINAL_BYTES = 640u;
 const ivec2 FRAMEBUFFER_SIZE = ivec2(32, 18);
 
 ivec2 stateWordCoordinate(uint index) {
@@ -191,14 +194,17 @@ void main() {
     float border = min(min(p.x, 320.0 - p.x), min(p.y, 180.0 - p.y));
     colour += vec3(0.02, 0.16, 0.20) * (1.0 - smoothstep(0.0, 2.0, border));
 
-    // The right panel displays the memory-mapped 32x18 framebuffer at 0x1000.
+    bool linuxView = readRamWord(0u) == 0x00050433u
+                  && readRamWord(1u) == 0x000584b3u;
+
+    // The demo view displays the memory-mapped 32x18 framebuffer at 0x1000.
     vec2 framebufferOrigin = vec2(116.0, 24.0);
     vec2 framebufferExtent = vec2(192.0, 108.0);
     vec2 framebufferPixel = p - framebufferOrigin;
     bool inFramebuffer = framebufferPixel.x >= 0.0 && framebufferPixel.y >= 0.0
                       && framebufferPixel.x < framebufferExtent.x
                       && framebufferPixel.y < framebufferExtent.y;
-    if (inFramebuffer) {
+    if (inFramebuffer && !linuxView) {
         ivec2 cell = ivec2(floor(framebufferPixel / 6.0));
         uint index = FRAMEBUFFER_BASE + uint(cell.y * FRAMEBUFFER_SIZE.x + cell.x);
         vec3 pixelColour = framebufferColour(readRamWord(index));
@@ -209,30 +215,54 @@ void main() {
         colour = pixelColour;
     }
 
-    // The UART panel shows the newest 96 bytes as three fixed-width rows.
-    vec2 uartPanelOrigin = vec2(116.0, 134.0);
+    // Linux uses the right panel as a 32-column, 20-row UART terminal.
+    vec2 uartPanelOrigin = linuxView ? vec2(116.0, 16.0) : vec2(116.0, 134.0);
     vec2 uartPanelPixel = p - uartPanelOrigin;
     if (uartPanelPixel.x >= 0.0 && uartPanelPixel.x < 192.0
-            && uartPanelPixel.y >= 0.0 && uartPanelPixel.y < 26.0) {
+            && uartPanelPixel.y >= 0.0
+            && uartPanelPixel.y < (linuxView ? 144.0 : 26.0)) {
         colour = mix(colour, vec3(0.008, 0.025, 0.034), 0.88);
     }
     float uartLabelInk = 0.0;
-    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(118.0, 136.0), 84, 1.0));
-    uartLabelInk = max(uartLabelInk, glyphPixel(p, vec2(123.0, 136.0), 88, 1.0));
+    vec2 uartLabelOrigin = linuxView ? vec2(118.0, 18.0) : vec2(118.0, 136.0);
+    uartLabelInk = max(uartLabelInk, glyphPixel(p, uartLabelOrigin, 84, 1.0));
+    uartLabelInk = max(uartLabelInk,
+        glyphPixel(p, uartLabelOrigin + vec2(5.0, 0.0), 88, 1.0));
     colour = mix(colour, textColour * 0.88, uartLabelInk);
 
     uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
-    uint uartCount = min(uartHead, 96u);
-    uint uartStart = uartHead - uartCount;
+    uint uartDisplayEnd = linuxView ? (uartHead + 31u) & ~31u : uartHead;
+    uint uartDisplayBytes = linuxView ? UART_TERMINAL_BYTES : 96u;
+    uint uartCount = min(uartDisplayEnd, uartDisplayBytes);
+    uint uartStart = uartDisplayEnd - uartCount;
     float uartInk = 0.0;
-    for (int index = 0; index < 96; ++index) {
-        if (uint(index) < uartCount) {
-            uint bufferOffset = (uartStart + uint(index)) % UART_TX_BUFFER_BYTES;
+    vec2 uartTextOrigin = linuxView ? vec2(143.0, 18.0) : vec2(143.0, 136.0);
+    float uartRowStride = linuxView ? 7.0 : 8.0;
+    vec2 uartTextPixel = p - uartTextOrigin;
+    int uartRows = linuxView ? 20 : 3;
+    bool inUartText = uartTextPixel.x >= 0.0 && uartTextPixel.x < 160.0
+                   && uartTextPixel.y >= 0.0
+                   && uartTextPixel.y < float(uartRows) * uartRowStride;
+    if (inUartText) {
+        int column = int(floor(uartTextPixel.x / 5.0));
+        int row = int(floor(uartTextPixel.y / uartRowStride));
+        uint index = uint(row * 32 + column);
+        uint absoluteIndex = uartStart + index;
+        uint lineSlot = (absoluteIndex >> 5u) % UART_LINE_COUNT;
+        uint lineLength = readStateWord(UART_LINE_LENGTH_BASE + lineSlot);
+        bool populated = linuxView
+            ? absoluteIndex < uartHead && uint(column) < lineLength
+            : index < uartCount;
+        if (populated) {
+            uint bufferOffset = absoluteIndex % UART_TX_BUFFER_BYTES;
             int code = int(readByte(UART_TX_BUFFER_OFFSET + bufferOffset));
-            float column = float(index % 32);
-            float row = float(index / 32);
-            uartInk = max(uartInk, glyphPixel(p,
-                vec2(143.0 + column * 5.0, 136.0 + row * 8.0), code, 1.0));
+            uartInk = glyphPixel(
+                p,
+                uartTextOrigin + vec2(float(column) * 5.0,
+                                      float(row) * uartRowStride),
+                code,
+                1.0
+            );
         }
     }
     colour = mix(colour, valueColour, uartInk);
@@ -240,7 +270,7 @@ void main() {
     // A compact memory activity strip visualizes the first 128 RAM words.
     vec2 memoryOrigin = vec2(116.0, 164.0);
     vec2 memoryPixel = p - memoryOrigin;
-    if (memoryPixel.x >= 0.0 && memoryPixel.x < 192.0
+    if (!linuxView && memoryPixel.x >= 0.0 && memoryPixel.x < 192.0
             && memoryPixel.y >= 0.0 && memoryPixel.y < 6.0) {
         ivec2 cell = ivec2(floor(memoryPixel / 3.0));
         uint index = uint(cell.y * 64 + cell.x);

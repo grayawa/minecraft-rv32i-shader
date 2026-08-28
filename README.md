@@ -1,6 +1,6 @@
 # Minecraft RV32IMA Shader
 
-一个运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。CPU、RAM、设备与显示均由资源包内的 GLSL 330 shader 驱动。`rv32i_linux` 配置加载 OpenSBI、Linux 5.17.11-rvc+ 与 ROMFS 用户空间，并以 `/rvcinit` 启动系统。
+一个运行在 Minecraft Java Edition Postprocess Shader 中的 32 位 RISC-V 模拟器。CPU、RAM、设备与显示均由资源包内的 GLSL 330 shader 驱动。`rv32i_linux` 配置加载 OpenSBI、Linux 5.17.11-rvc+ 与 ROMFS 用户空间，并在用户空间初始化完成后运行斐波那契程序。
 
 当前资源包面向 **Minecraft Java Edition 26.3-snapshot-5**，资源包格式为 93.0。
 
@@ -43,7 +43,8 @@ Linux 配置使用 [PiMaker/rvc](https://github.com/pimaker/rvc/tree/da936a719b4
 - DTB 位于 `0x00001020`，启动时通过 `a1` 传入。
 - ROMFS 映射到只读 MTD 窗口 `0x40000000`。
 - 内核命令行使用 `root=mtd:root rootfstype=romfs ro init=/rvcinit`。
-- 用户空间启动完成后，UART 显示 `Welcome to userland!` 与 `/ #`。
+- `/rvcinit` 建立可写 overlay root，进入 chroot，并挂载 `/proc` 与 `/sys`。
+- 用户空间初始化完成后，`/rvcinit` 运行 `/fibonacci`，随后启动 `getty` 登录 shell。
 
 [`tools/import_rvc_assets.py`](tools/import_rvc_assets.py) 从 rvc 的分通道 PNG 还原 payload、DTB 与 ROMFS。导入器将 DTB 内存大小写为 `0x00BFF000`，并让 OpenSBI 保持使用 `a1=0x1020` 指向的设备树。DTB 写事务按设备空操作完成，与 rvc 的窗口语义一致。
 
@@ -52,9 +53,15 @@ Linux payload 与 ROMFS 的固定校验值为：
 | 产物 | 有效字节数 | SHA-256 |
 | --- | ---: | --- |
 | OpenSBI + Linux payload | 8,305,028 | `75a060159e959c833df4305839705fdb185752cc6b730b0f3c72854a5d4b3de1` |
-| ROMFS | 56,466,528 | `b8e1655993bb05358263d39863937f0f643a616072fe0079d1ca338028be5f3d` |
+| ROMFS | 56,471,216 | `1f8adf1c3cc689d68004f362a268d1e9013d337d42a97f5641272a2c1fa86044` |
 
-rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 Linux 用户空间并显示 `/ #`。参考轨迹约在 374 万条指令时从 OpenSBI 跳到 Linux 入口，并在第 45,170,487 个 guest 周期附近显示 shell prompt；Linux 建立页表后，PC 进入 `0xC...` 内核虚拟地址。Minecraft 中的墙钟时间由 GPU、分辨率、帧率上限和窗口状态共同决定。
+rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 Linux 用户空间、输出完整数列、以状态 0 返回并显示 `/ #`。参考轨迹约在 374 万条指令时从 OpenSBI 跳到 Linux 入口，并在第 45,320,395 个 guest 周期附近显示 shell prompt；Linux 建立页表后，PC 进入 `0xC...` 内核虚拟地址。Minecraft 中的墙钟时间由 GPU、分辨率、帧率上限和窗口状态共同决定。
+
+## Fibonacci 用户程序
+
+[`guest/fibonacci.S`](guest/fibonacci.S) 实现一个静态 RV32IMA Linux ELF。程序通过 `write(2)` 输出 48 个 32 位无符号斐波那契数，从 `F00 = 0000000000` 到 `F47 = 2971215073`，然后通过 `exit(2)` 返回状态 0。每条 UART 记录占用 32 字节，可在终端区域中按行显示。
+
+[`guest/rvcinit`](guest/rvcinit) 在 overlay chroot 初始化完成后同步运行 `/fibonacci`。程序返回后，PID 1 启动原有的 `getty` 循环。
 
 ## 仪表盘
 
@@ -67,9 +74,10 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 - `MC`、`ME`、`MT`：`mcause`、`mepc`、`mtval`。
 - 绿色指示灯：CPU 正在运行。
 - 金色指示灯：CPU 到达 EBREAK。
-- 右侧 32 × 18 区域：地址 `0x00001000` 的测试 framebuffer。
-- `TX` 下方三行：UART 环形缓冲区中最新的 96 个字符。
-- 底部色带：RAM 活动采样。
+- 自检视图右侧 32 × 18 区域：地址 `0x00001000` 的测试 framebuffer。
+- Linux 视图右侧 32 × 20 区域：UART 终端中最新的 640 个字符单元。
+- Linux UART 换行会推进到下一行，行宽为 32 个字符。
+- 自检视图底部色带：RAM 活动采样。
 
 OpenSBI 阶段的 PC 主要位于 `0x800...`。进入 Linux payload 时 PC 会短暂位于 `0x804...`，页表启用后主要位于 `0xC...`。异常诊断可直接读取 `MC/ME/MT`；Linux 通过 SBI 服务进入 M-mode 时，`MC=9` 表示一次正常的 supervisor environment call。
 
@@ -116,7 +124,7 @@ OpenSBI 阶段的 PC 主要位于 `0x800...`。进入 Linux payload 时 PC 会�
 | `0x40000000`–`0x435DBFFF` | ROMFS MTD 纹理窗口 |
 | `0x80000000`–`0x80BFEFFF` | Linux 配置的 guest RAM |
 
-UART 覆盖 THR、IER、IIR、LCR 与 LSR。LSR 返回 THRE/TEMT，LCR.DLAB 控制 divisor-latch 访问。发送字节写入 RAM target 的 4 KiB 保护页，256-byte 环形缓冲区位于保护页起始位置。
+UART 覆盖 THR、IER、IIR、LCR 与 LSR。LSR 返回 THRE/TEMT，LCR.DLAB 控制 divisor-latch 访问。发送字节写入 RAM target 的 4 KiB 保护页，1 KiB 环形缓冲区位于保护页起始位置。Linux 终端使用 32 个行长度状态槽保持换行布局。
 
 Linux profile 的 `mtime` 每 40 个 CPU pass 增加一次，对应 rvc 来宾 DTB 的 5 kHz timebase。写入 `mtimecmp` 会完成本次 timer event，并清除 `MTIP/STIP` pending 位。内置自检 profile 使用逐指令 `mtime`。
 
@@ -184,8 +192,11 @@ python tools/build_post_effect.py
 ```powershell
 git clone --recursive https://github.com/pimaker/rvc.git
 git -C rvc checkout da936a719b4254e91ba422361d7c1d1d0e775b8f
+make -C guest
 python tools/import_rvc_assets.py .\rvc
 ```
+
+`guest/Makefile` 使用 GNU RISC-V Binutils 生成静态 ELF。Arch Linux 的 `riscv32-elf-binutils` 包提供默认工具路径。导入器将项目版 `/rvcinit` 与 `/fibonacci` 写入上游 ROMFS，并更新目录链、文件头校验和与超级块校验和。
 
 生成平台 DTB 与 texture：
 
@@ -201,7 +212,7 @@ python tools/bin_to_texture.py programs/mcrv.dtb assets/mcrv/textures/effect/dtb
 python tools/test_demo.py
 ```
 
-测试会重建内置机器码，执行 2815 条指令的参考模型，并校验 shader 常量、三份 pass graph、boot descriptor、DTB、Linux payload 与 ROMFS 哈希。`tools/ShadercCheck.java` 可配合 Minecraft 附带的 LWJGL ShaderC 3.4.2 编译四个片元 shader。
+测试会重建内置机器码，执行 2815 条指令的参考模型，运行斐波那契 ELF 的 syscall 级参考执行，并校验 shader 常量、三份 pass graph、boot descriptor、DTB、Linux payload、ROMFS 目录与哈希。`tools/ShadercCheck.java` 可配合 Minecraft 附带的 LWJGL ShaderC 3.4.2 编译四个片元 shader。
 
 构建发布 ZIP：
 

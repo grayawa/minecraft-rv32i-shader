@@ -1,0 +1,32 @@
+#!/bin/sh
+
+if [ "$1" != "chroot" ]; then
+    echo
+    echo "> Welcome to userland!"
+    echo "> Setting up overlay mount for writeable root"
+    mount -t tmpfs tmpfs /tmp
+    mkdir /tmp/upper
+    mkdir /tmp/work
+    mkdir /tmp/newroot
+    mount -t overlay overlay \
+        -o lowerdir=/,upperdir=/tmp/upper,workdir=/tmp/work /tmp/newroot
+    mount --bind /dev /tmp/newroot/dev
+    chroot /tmp/newroot /rvcinit chroot
+else
+    echo "> Entered overlay chroot, mounting /proc & /sys"
+    mount -t proc proc /proc
+    mount -t sysfs sys /sys
+
+    echo "> Startup took: $(cut -d' ' -f0 </proc/uptime)s"
+    echo "> Starting Fibonacci user program"
+    /fibonacci
+    echo "> Fibonacci program exited with status $?"
+    echo "> Starting login shell on TTY /dev/hvc0"
+
+    export PATH="$PATH:/usr/local/bin"
+
+    while true; do
+        getty -l /bin/sh -n 0 /dev/hvc0
+        echo "> Restarting login shell"
+    done
+fi

@@ -1,7 +1,3 @@
-*.fsh text eol=lf
-*.json text eol=lf
-*.mcmeta text eol=lf
-*.md text eol=lf
-*.java text eol=lf
-*.py text eol=lf
-*.zip binary
+guest/Makefile text eol=lf
+guest/*.S text eol=lf
+guest/rvcinit text eol=lf

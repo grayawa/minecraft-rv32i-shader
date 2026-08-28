@@ -61,7 +61,7 @@ const uint CLINT_MTIME_HIGH_ADDRESS = 0x0200bffcu;
 const uint UART_BASE_ADDRESS = 0x10000000u;
 const uint UART_REGISTER_BYTES = 8u;
 const uint UART_TX_BUFFER_OFFSET = RAM_BYTES;
-const uint UART_TX_BUFFER_BYTES = 256u;
+const uint UART_TX_BUFFER_BYTES = 1024u;
 const uint PLIC_PRIORITY_ADDRESS = 0x0c000028u;
 const uint PLIC_PENDING_ADDRESS = 0x0c001000u;
 const uint PLIC_ENABLE_ADDRESS = 0x0c002000u;
@@ -135,6 +135,8 @@ const uint MEMOP_DESTINATION_PHYSICAL_INDEX = 4867u;
 const uint MEMOP_BYTE_COUNT_INDEX = 4868u;
 const uint RTC_LOW_INDEX = 4869u;
 const uint RTC_HIGH_INDEX = 4870u;
+const uint UART_LINE_LENGTH_BASE = 4871u;
+const uint UART_LINE_COUNT = 32u;
 
 const uint PRIVILEGE_USER = 0u;
 const uint PRIVILEGE_SUPERVISOR = 1u;
@@ -1235,7 +1237,16 @@ void main() {
     }
     if (uartTransmit) {
         uint uartHead = readStateWord(UART_TX_HEAD_INDEX);
-        if (outputIndex == UART_TX_HEAD_INDEX) outputWord = uartHead + 1u;
+        bool lineFeed = linuxGuestPresent() && (memoryValue & 0xffu) == 10u;
+        uint nextUartHead = lineFeed
+            ? (uartHead + 32u) & ~31u
+            : uartHead + 1u;
+        if (outputIndex == UART_TX_HEAD_INDEX) outputWord = nextUartHead;
+        uint lineSlot = (uartHead >> 5u) % UART_LINE_COUNT;
+        if (linuxGuestPresent()
+                && outputIndex == UART_LINE_LENGTH_BASE + lineSlot) {
+            outputWord = lineFeed ? uartHead & 31u : (uartHead & 31u) + 1u;
+        }
         if ((readStateWord(UART_IER_INDEX) & 0x2u) != 0u
                 && outputIndex == UART_PENDING_INDEX) {
             outputWord = 1u;
