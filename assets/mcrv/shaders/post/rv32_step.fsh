@@ -50,6 +50,7 @@ const uint MTD_BASE_ADDRESS = 0x40000000u;
 const uint MTD_BYTES = MTD_TEXTURE_WORDS * 4u;
 const uint RTC_BASE_ADDRESS = 0x030007f8u;
 const uint RTC_REGISTER_BYTES = 8u;
+const uint LINUX_TIMER_DIVIDER = 40u;
 const uint INVALID_INDEX = 0xffffffffu;
 
 const uint CLINT_MSIP_ADDRESS = 0x02000000u;
@@ -254,6 +255,10 @@ uint readDtbWord(uint address) {
 uint readMtdWord(uint address) {
     uint offset = address - MTD_BASE_ADDRESS;
     return decodeWord(texelFetch(MtdImageSampler, mtdWordCoordinate(offset >> 2u), 0));
+}
+
+bool linuxGuestPresent() {
+    return readMtdWord(MTD_BASE_ADDRESS) == 0x6d6f722du; // "-rom"
 }
 
 uint clintStateIndex(uint address) {
@@ -1160,8 +1165,10 @@ void main() {
     }
 
     uint outputWord = currentWord;
+    uint timerIncrement = (!linuxGuestPresent()
+        || cycle % LINUX_TIMER_DIVIDER == LINUX_TIMER_DIVIDER - 1u) ? 1u : 0u;
     uint currentTimeLow = readStateWord(CLINT_MTIME_LOW_INDEX);
-    uint nextTimeLow = currentTimeLow + 1u;
+    uint nextTimeLow = currentTimeLow + timerIncrement;
     uint nextTimeHigh = readStateWord(CLINT_MTIME_HIGH_INDEX)
         + (nextTimeLow < currentTimeLow ? 1u : 0u);
     if (outputIndex == CLINT_MTIME_LOW_INDEX) outputWord = nextTimeLow;
@@ -1206,6 +1213,12 @@ void main() {
     if (writeMemory && memoryWidth == 4u
             && clintWriteIndex != INVALID_INDEX && outputIndex == clintWriteIndex) {
         outputWord = memoryValue;
+    }
+    if (writeMemory && memoryWidth == 4u
+            && (memoryAddress == CLINT_MTIMECMP_LOW_ADDRESS
+                || memoryAddress == CLINT_MTIMECMP_HIGH_ADDRESS)
+            && outputIndex == csrStateIndex(CSR_MIP)) {
+        outputWord = readStateWord(csrStateIndex(CSR_MIP)) & ~0x000000a0u;
     }
     if (writeMemory && rtcAccessValid(memoryAddress, memoryWidth)
             && memoryAddress == RTC_BASE_ADDRESS) {

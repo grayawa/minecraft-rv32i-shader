@@ -118,6 +118,8 @@ OpenSBI 阶段的 PC 主要位于 `0x800...`。进入 Linux payload 时 PC 会�
 
 UART 覆盖 THR、IER、IIR、LCR 与 LSR。LSR 返回 THRE/TEMT，LCR.DLAB 控制 divisor-latch 访问。发送字节写入 RAM target 的 4 KiB 保护页，256-byte 环形缓冲区位于保护页起始位置。
 
+Linux profile 的 `mtime` 每 40 个 CPU pass 增加一次，对应 rvc 来宾 DTB 的 5 kHz timebase。写入 `mtimecmp` 会完成本次 timer event，并清除 `MTIP/STIP` pending 位。内置自检 profile 使用逐指令 `mtime`。
+
 ## Shader 状态布局
 
 RGBA8 纹理的每个像素保存一个小端 32 位单词：

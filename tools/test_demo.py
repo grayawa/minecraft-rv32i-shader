@@ -403,6 +403,16 @@ def read_pending_interrupts(
     return pending & MASK32
 
 
+def write_mtimecmp(
+    csrs: dict[int, int], clint: dict[str, int], address: int, value: int
+) -> None:
+    if address == CLINT_MTIMECMP_LOW:
+        clint["mtimecmp"] = (clint["mtimecmp"] & 0xFFFFFFFF00000000) | value
+    else:
+        clint["mtimecmp"] = (clint["mtimecmp"] & MASK32) | (value << 32)
+    csrs[CSR_MIP] &= ~0xA0
+
+
 def select_interrupt_cause(pending: int) -> int | None:
     for cause in (11, 3, 7, 9, 1, 5):
         if pending & (1 << cause):
@@ -432,6 +442,10 @@ def verify_interrupt_logic() -> None:
     assert pending == (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9)
     assert select_interrupt_cause((1 << 7) | (1 << 11)) == 11
     assert select_interrupt_cause(0) is None
+    csrs[CSR_MIP] = 0xA8
+    write_mtimecmp(csrs, clint, CLINT_MTIMECMP_LOW, 20)
+    assert csrs[CSR_MIP] == 0x08
+    assert read_pending_interrupts(csrs, clint, uart, plic) & 0xA0 == 0
 
 
 def physical_access_valid(address: int, width: int) -> bool:
@@ -644,13 +658,12 @@ def run_demo(
                     elif physical_address == CLINT_MSIP:
                         clint["msip"] = registers[rs2] & 1
                     elif physical_address == CLINT_MTIMECMP_LOW:
-                        clint["mtimecmp"] = (
-                            (clint["mtimecmp"] & 0xFFFFFFFF00000000)
-                            | registers[rs2]
+                        write_mtimecmp(
+                            csrs, clint, physical_address, registers[rs2]
                         )
                     elif physical_address == CLINT_MTIMECMP_HIGH:
-                        clint["mtimecmp"] = (
-                            (clint["mtimecmp"] & MASK32) | (registers[rs2] << 32)
+                        write_mtimecmp(
+                            csrs, clint, physical_address, registers[rs2]
                         )
                     elif physical_address in (CLINT_MTIME_LOW, CLINT_MTIME_HIGH):
                         mtime_write = (physical_address, registers[rs2])
@@ -996,6 +1009,8 @@ def main() -> None:
     ).read_text(encoding="utf-8")
     assert "const uint UART_TX_BUFFER_OFFSET = RAM_BYTES;" in step_shader
     assert "if (dtbAddressValid(address, width)) return true;" in step_shader
+    assert "const uint LINUX_TIMER_DIVIDER = 40u;" in step_shader
+    assert "outputWord = readStateWord(csrStateIndex(CSR_MIP)) & ~0x000000a0u;" in step_shader
     assert "const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;" in display_shader
 
     texture_path = (
@@ -1275,7 +1290,7 @@ def main() -> None:
         "RV32IMA M/S/U guest texture OK: M/S UART/PLIC external interrupts, CLINT timer "
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
         "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
-        "12 MiB RAM DTB, 56,466,528-byte ROMFS and 70-pass profile"
+        "12 MiB RAM DTB, 56,466,528-byte ROMFS, rvc timer semantics and 70-pass profile"
     )
 
 
