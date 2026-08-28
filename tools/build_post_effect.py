@@ -28,6 +28,9 @@ PROFILES = (
     Profile("rv32i", "guest_demo", "dtb_mcrv", "mtd_empty", 1),
     Profile("rv32i_boot", "guest_boot_probe", "dtb_mcrv", "mtd_empty", 1),
     Profile("rv32i_linux", "guest_linux", "dtb_rvc_linux", "mtd_linux", 32),
+    Profile("rv32i_linux_fast", "guest_linux", "dtb_rvc_linux", "mtd_linux", 64),
+    Profile("rv32i_linux_turbo", "guest_linux", "dtb_rvc_linux", "mtd_linux", 128),
+    Profile("rv32i_linux_ultra", "guest_linux", "dtb_rvc_linux", "mtd_linux", 256),
 )
 
 

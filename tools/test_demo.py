@@ -1235,21 +1235,29 @@ def main() -> None:
             "height": 1024,
         }
 
-    linux_effect_path = (
-        project_root / "assets" / "mcrv" / "post_effect" / "rv32i_linux.json"
-    )
-    linux_effect = json.loads(linux_effect_path.read_text(encoding="utf-8"))
-    linux_step_passes = [
-        entry for entry in linux_effect["passes"]
-        if entry["fragment_shader"] == "mcrv:post/rv32_step"
-    ]
-    assert len(linux_step_passes) == 64
-    assert len(linux_effect["passes"]) == 70
-    for entry in linux_step_passes:
-        inputs = {item["sampler_name"]: item for item in entry["inputs"]}
-        assert inputs["GuestImage"]["location"] == "mcrv:guest_linux"
-        assert inputs["DtbImage"]["location"] == "mcrv:dtb_rvc_linux"
-        assert inputs["MtdImage"]["location"] == "mcrv:mtd_linux"
+    linux_profiles = {
+        "rv32i_linux": (64, 70),
+        "rv32i_linux_fast": (128, 134),
+        "rv32i_linux_turbo": (256, 262),
+        "rv32i_linux_ultra": (512, 518),
+    }
+    for profile_name, (instruction_count, pass_count) in linux_profiles.items():
+        linux_effect_path = (
+            project_root / "assets" / "mcrv" / "post_effect"
+            / f"{profile_name}.json"
+        )
+        linux_effect = json.loads(linux_effect_path.read_text(encoding="utf-8"))
+        linux_step_passes = [
+            entry for entry in linux_effect["passes"]
+            if entry["fragment_shader"] == "mcrv:post/rv32_step"
+        ]
+        assert len(linux_step_passes) == instruction_count
+        assert len(linux_effect["passes"]) == pass_count
+        for entry in linux_step_passes:
+            inputs = {item["sampler_name"]: item for item in entry["inputs"]}
+            assert inputs["GuestImage"]["location"] == "mcrv:guest_linux"
+            assert inputs["DtbImage"]["location"] == "mcrv:dtb_rvc_linux"
+            assert inputs["MtdImage"]["location"] == "mcrv:mtd_linux"
 
     linux_guest_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect"
@@ -1423,7 +1431,7 @@ def main() -> None:
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
         "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
         "12 MiB RAM DTB, Fibonacci ROMFS user program, 1 KiB UART ring, "
-        "rvc timer semantics and 70-pass profile"
+        "rvc timer semantics and Linux profiles up to 512 instructions/frame"
     )
 
 

@@ -33,6 +33,11 @@
 | `mcrv:rv32i` | 2 | 内置 RV32IMA/Sv32 自检 | 指令、异常、中断与虚拟内存验证 |
 | `mcrv:rv32i_boot` | 2 | 启动寄存器探针 | `a0`、`a1` 与 DTB 验证 |
 | `mcrv:rv32i_linux` | 64 | OpenSBI + Linux + ROMFS | Linux 启动与用户空间 |
+| `mcrv:rv32i_linux_fast` | 128 | OpenSBI + Linux + ROMFS | 加速 Linux 启动 |
+| `mcrv:rv32i_linux_turbo` | 256 | OpenSBI + Linux + ROMFS | 高吞吐 Linux 启动 |
+| `mcrv:rv32i_linux_ultra` | 512 | OpenSBI + Linux + ROMFS | 极限吞吐量测试 |
+
+Fast、Turbo 与 Ultra 配置增加每次 RAM commit 之间的 CPU pass 数量，从而摊薄两次 12 MiB RAM commit 的固定成本。实际吞吐量由 GPU、FPS 上限和窗口状态共同决定。稳定配置适合兼容性验证，Fast 适合作为日常启动配置，Turbo 与 Ultra 适合测试显卡上的最高吞吐量。
 
 ## Linux 启动配置
 
