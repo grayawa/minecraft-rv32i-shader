@@ -1418,7 +1418,7 @@ def main() -> None:
     rootfs_size = int.from_bytes(mtd_texture[8:12], "big")
     assert rootfs_size == 56_471_216
     assert hashlib.sha256(mtd_texture[:rootfs_size]).hexdigest() == (
-        "297725d0aa9f73442db1cd182f89bd1d753feb6535c50ac773934b4c83f77d10"
+        "84245fa20d5ef5ddb12c262dc5fc6d4ee6469484c34201102945cb952edf375f"
     )
     rootfs = mtd_texture[:rootfs_size]
     assert checksum(rootfs[:512]) == 0
@@ -1431,7 +1431,7 @@ def main() -> None:
     assert init_script == (project_root / "guest" / "rvcinit").read_bytes()
     assert init_script.index(b"/fibonacci") < init_script.index(b"/bin/sh -i")
     assert b"/bin/sh -i" in init_script
-    assert b"TTY /dev/ttyS0" in init_script
+    assert b"Starting interactive shell on inherited console" in init_script
     fibonacci_offset = named_entries["fibonacci"]
     fibonacci_info = struct.unpack_from(">I", rootfs, fibonacci_offset)[0] & 15
     fibonacci_size = struct.unpack_from(">I", rootfs, fibonacci_offset + 8)[0]

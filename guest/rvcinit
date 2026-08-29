@@ -21,7 +21,7 @@ else
     echo "> Starting Fibonacci user program"
     /fibonacci
     echo "> Fibonacci program exited with status $?"
-    echo "> Starting interactive shell on TTY /dev/ttyS0"
+    echo "> Starting interactive shell on inherited console"
 
     export PATH="$PATH:/usr/local/bin"
 

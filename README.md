@@ -66,7 +66,7 @@ Linux payload 与 ROMFS 的固定校验值为：
 | 产物 | 有效字节数 | SHA-256 |
 | --- | ---: | --- |
 | OpenSBI + Linux payload | 8,305,028 | `75a060159e959c833df4305839705fdb185752cc6b730b0f3c72854a5d4b3de1` |
-| ROMFS | 56,471,216 | `297725d0aa9f73442db1cd182f89bd1d753feb6535c50ac773934b4c83f77d10` |
+| ROMFS | 56,471,216 | `84245fa20d5ef5ddb12c262dc5fc6d4ee6469484c34201102945cb952edf375f` |
 
 rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 Linux 用户空间、输出完整数列、以状态 0 返回并显示 `/ #`。参考轨迹约在 374 万条指令时从 OpenSBI 跳到 Linux 入口，并在第 45,320,395 个 guest 周期附近显示 shell prompt；Linux 建立页表后，PC 进入 `0xC...` 内核虚拟地址。Minecraft 中的墙钟时间由 GPU、分辨率、帧率上限和窗口状态共同决定。
 
@@ -78,7 +78,7 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 ## 屏幕键盘
 
-`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。Linux 交互式 shell 继承 `/dev/ttyS0` 控制台，与模拟 16550 UART 共用同一条收发链路。最终仪表盘覆盖该标记所在的屏幕区域。
+`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。Linux 交互式 shell 继承内核控制台，SBI console 经 OpenSBI 连接模拟 16550 UART，形成完整的收发链路。最终仪表盘覆盖该标记所在的屏幕区域。
 
 | 玩家输入 | 键盘操作 |
 | --- | --- |
