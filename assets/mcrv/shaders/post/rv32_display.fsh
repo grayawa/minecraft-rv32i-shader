@@ -32,9 +32,13 @@ const uint UART_TX_HEAD_INDEX = 16307u;
 const uint UART_LINE_LENGTH_BASE = 4871u;
 const uint UART_LINE_COUNT = 32u;
 const uint KEYBOARD_SELECTION_INDEX = 4904u;
+const uint RAM_PAGE_INDEX = 4907u;
 const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;
 const uint UART_TX_BUFFER_BYTES = 1024u;
 const uint UART_TERMINAL_BYTES = 448u;
+const uint RAM_PAGE_COUNT = 24u;
+const uint RAM_PAGE_WORDS = 131072u;
+const uint RAM_SAMPLE_WORD_STRIDE = 1024u;
 const ivec2 FRAMEBUFFER_SIZE = ivec2(32, 18);
 
 ivec2 stateWordCoordinate(uint index) {
@@ -319,13 +323,18 @@ void main() {
         colour = mix(colour, textColour * 0.88, keyboardLabel);
     }
 
-    // A compact memory activity strip visualizes the first 128 RAM words.
+    // The Linux memory strip samples every 4 KiB page in a 512 KiB window.
     vec2 memoryOrigin = vec2(116.0, 164.0);
     vec2 memoryPixel = p - memoryOrigin;
-    if (!linuxView && memoryPixel.x >= 0.0 && memoryPixel.x < 192.0
+    if (memoryPixel.x >= 0.0 && memoryPixel.x < 192.0
             && memoryPixel.y >= 0.0 && memoryPixel.y < 6.0) {
         ivec2 cell = ivec2(floor(memoryPixel / 3.0));
-        uint index = uint(cell.y * 64 + cell.x);
+        uint sampleIndex = uint(cell.y * 64 + cell.x);
+        uint page = readStateWord(RAM_PAGE_INDEX) % RAM_PAGE_COUNT;
+        uint index = linuxView
+            ? min(page * RAM_PAGE_WORDS
+                  + sampleIndex * RAM_SAMPLE_WORD_STRIDE, RAM_WORDS - 1u)
+            : sampleIndex;
         uint value = readRamWord(index);
         vec3 heat = vec3(
             float(value & 0xffu),
@@ -374,6 +383,15 @@ void main() {
         colour = mix(colour, textColour * 0.88, trapLabel);
         valueInk = max(valueInk,
             drawHex(p, vec2(29.0, y), readStateWord(trapStateIndex[row]), 1.0));
+    }
+    if (linuxView) {
+        float ramPageLabel = glyphPixel(p, vec2(10.0, 170.0), 82, 1.0);
+        ramPageLabel = max(ramPageLabel,
+            glyphPixel(p, vec2(15.0, 170.0), 80, 1.0));
+        colour = mix(colour, textColour * 0.88, ramPageLabel);
+        valueInk = max(valueInk,
+            drawHex(p, vec2(29.0, 170.0),
+                    readStateWord(RAM_PAGE_INDEX) % RAM_PAGE_COUNT, 1.0));
     }
     colour = mix(colour, valueColour, valueInk);
 

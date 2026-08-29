@@ -1126,8 +1126,11 @@ def main() -> None:
     assert "const uint UART_TX_BUFFER_BYTES = 1024u;" in step_shader
     assert "const uint UART_LINE_LENGTH_BASE = 4871u;" in step_shader
     assert "const uint UART_RX_READY_INDEX = 4906u;" in step_shader
+    assert "const uint RAM_PAGE_INDEX = 4907u;" in step_shader
     assert "value = uartReceiveInterruptPending() ? 0x04u" in step_shader
     assert "inputMarker != readStateWord(INPUT_MARKER_INDEX)" in step_shader
+    assert "(inputEvent == 5u || inputEvent == 7u)" in step_shader
+    assert "(readStateWord(RAM_PAGE_INDEX) + 1u) % 24u" in step_shader
     assert "if (dtbAddressValid(address, width)) return true;" in step_shader
     assert "const uint LINUX_TIMER_DIVIDER = 40u;" in step_shader
     assert "outputWord = readStateWord(csrStateIndex(CSR_MIP)) & ~0x000000a0u;" in step_shader
@@ -1135,6 +1138,10 @@ def main() -> None:
     assert "const uint UART_TX_BUFFER_BYTES = 1024u;" in display_shader
     assert "const uint UART_TERMINAL_BYTES = 448u;" in display_shader
     assert "const uint KEYBOARD_SELECTION_INDEX = 4904u;" in display_shader
+    assert "const uint RAM_PAGE_INDEX = 4907u;" in display_shader
+    assert "const uint RAM_PAGE_COUNT = 24u;" in display_shader
+    assert "const uint RAM_PAGE_WORDS = 131072u;" in display_shader
+    assert "const uint RAM_SAMPLE_WORD_STRIDE = 1024u;" in display_shader
     assert "for (int sampleIndex = 0; sampleIndex < 256; ++sampleIndex)" in input_capture_shader
 
     keyboard_bytes = [
@@ -1191,13 +1198,22 @@ def main() -> None:
     datapack_root = project_root / "datapack" / "MCRVInput"
     datapack_meta = json.loads((datapack_root / "pack.mcmeta").read_text("utf-8"))
     assert datapack_meta["pack"]["min_format"] == [112, 0]
+    datapack_load = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "load.mcfunction"
+    ).read_text("utf-8")
+    datapack_poll = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "poll.mcfunction"
+    ).read_text("utf-8")
+    assert "scoreboard objectives add mcrv_hold dummy" in datapack_load
+    assert "if score @s mcrv_hold matches 10.. run function mcrv:input/emit" in datapack_poll
+    assert "run scoreboard players set @s mcrv_hold 7" in datapack_poll
     for direction, field in {
         "up": "forward",
         "down": "backward",
         "left": "left",
         "right": "right",
         "confirm": "jump",
-        "backspace": "sneak",
+        "page": "sneak",
         "cancel": "sprint",
     }.items():
         predicate = json.loads(
@@ -1522,8 +1538,8 @@ def main() -> None:
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
         "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
         "12 MiB RAM DTB, Fibonacci ROMFS user program, 1 KiB UART ring, "
-        "50-key input bridge, rvc timer semantics and Linux profiles up to 512 "
-        "instructions/frame"
+        "50-key input bridge, 24-page RAM sampler, rvc timer semantics and Linux "
+        "profiles up to 512 instructions/frame"
     )
 
 

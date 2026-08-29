@@ -143,6 +143,7 @@ const uint INPUT_MARKER_INDEX = 4903u;
 const uint KEYBOARD_SELECTION_INDEX = 4904u;
 const uint UART_RX_DATA_INDEX = 4905u;
 const uint UART_RX_READY_INDEX = 4906u;
+const uint RAM_PAGE_INDEX = 4907u;
 
 const uint PRIVILEGE_USER = 0u;
 const uint PRIVILEGE_SUPERVISOR = 1u;
@@ -1150,9 +1151,9 @@ void main() {
     uint inputEvent = inputMarker == 0u ? 0u : (inputMarker - 1u) & 0x7u;
     uint keyboardSelection = readStateWord(KEYBOARD_SELECTION_INDEX);
     uint nextKeyboardSelection = moveKeyboardSelection(keyboardSelection, inputEvent);
-    bool inputByteRequested = inputChanged && inputEvent >= 5u;
-    uint inputByte = inputEvent == 6u ? 127u
-                   : inputEvent == 7u ? 3u
+    bool inputByteRequested = inputChanged
+        && (inputEvent == 5u || inputEvent == 7u);
+    uint inputByte = inputEvent == 7u ? 3u
                    : keyboardByte(keyboardSelection);
     bool inputByteAccepted = inputByteRequested
         && (readStateWord(UART_RX_READY_INDEX) == 0u || uartReceiveRead);
@@ -1246,6 +1247,9 @@ void main() {
     if (inputChanged && inputEvent >= 1u && inputEvent <= 4u
             && outputIndex == KEYBOARD_SELECTION_INDEX) {
         outputWord = nextKeyboardSelection;
+    }
+    if (inputChanged && inputEvent == 6u && outputIndex == RAM_PAGE_INDEX) {
+        outputWord = (readStateWord(RAM_PAGE_INDEX) + 1u) % 24u;
     }
     if (uartReceiveRead && outputIndex == UART_RX_READY_INDEX) outputWord = 0u;
     if (inputByteAccepted && outputIndex == UART_RX_DATA_INDEX) {

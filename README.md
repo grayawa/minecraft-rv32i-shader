@@ -77,10 +77,12 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 | --- | --- |
 | 移动键位，默认为 W/A/S/D | 上、左、下、右移动光标 |
 | 跳跃键位，默认为 Space | 输入选中的字符 |
-| 潜行键位，默认为 Shift | 输入 Backspace |
+| 潜行键位，默认为 Shift | 切换到下一张 RAM 页面；长按连续翻页 |
 | 疾跑键位，默认为 Ctrl | 输入 Ctrl-C |
 
 键盘包含数字、小写英文字母、常用 shell 标点与一行控制键。最后一行显示 `_ < E C = : ; ' ? \`：`_` 输入空格，`<` 输入 Backspace，`E` 输入 Enter，`C` 输入 Ctrl-C。方向移动在键盘边缘循环。
+
+底部 RAM 色带提供 24 张页面，每张覆盖 512 KiB guest RAM。色带中的 128 个单元依次采样该窗口内的 4 KiB 物理页；左下角 `RP` 显示十六进制页面编号 `00`–`17`。Shift 首次触发后等待 10 个游戏刻，再以每 3 个游戏刻一页的速度连续翻页。
 
 输入事件使用交替序列位区分连续按键。UART 提供 RBR、LSR Data Ready、IIR receive-data-available 原因和 PLIC source 10 接收中断。标题色码位于仪表盘覆盖区域，资源包负责生成对应的 16 色字体纹理。输入时保持游戏 HUD 可见，并让游戏窗口拥有键盘焦点。
 
@@ -105,8 +107,9 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 - 自检视图右侧 32 × 18 区域：地址 `0x00001000` 的测试 framebuffer。
 - Linux 视图右侧上方 32 × 14 区域：UART 终端中最新的 448 个字符单元。
 - Linux 视图右侧下方 10 × 5 区域：屏幕键盘与当前选择。
+- Linux 视图底部 64 × 2 色带：当前 512 KiB RAM 页面的 128 个物理页采样点。
 - Linux UART 换行会推进到下一行，行宽为 32 个字符。
-- 自检视图底部色带：RAM 活动采样。
+- 自检视图底部色带：起始 128 个 RAM word。
 
 OpenSBI 阶段的 PC 主要位于 `0x800...`。进入 Linux payload 时 PC 会短暂位于 `0x804...`，页表启用后主要位于 `0xC...`。异常诊断可直接读取 `MC/ME/MT`；Linux 通过 SBI 服务进入 M-mode 时，`MC=9` 表示一次正常的 supervisor environment call。
 
