@@ -21,12 +21,12 @@ else
     echo "> Starting Fibonacci user program"
     /fibonacci
     echo "> Fibonacci program exited with status $?"
-    echo "> Starting login shell on TTY /dev/ttyS0"
+    echo "> Starting interactive shell on TTY /dev/ttyS0"
 
     export PATH="$PATH:/usr/local/bin"
 
     while true; do
-        getty -l /bin/sh -n 0 /dev/ttyS0
-        echo "> Restarting login shell"
+        /bin/sh -i
+        echo "> Restarting interactive shell"
     done
 fi

@@ -1418,7 +1418,7 @@ def main() -> None:
     rootfs_size = int.from_bytes(mtd_texture[8:12], "big")
     assert rootfs_size == 56_471_216
     assert hashlib.sha256(mtd_texture[:rootfs_size]).hexdigest() == (
-        "37c7ac10158a58ae7a4b1b93cf8b59a0408dc33ab3b49233cbd2d14e51a328e1"
+        "297725d0aa9f73442db1cd182f89bd1d753feb6535c50ac773934b4c83f77d10"
     )
     rootfs = mtd_texture[:rootfs_size]
     assert checksum(rootfs[:512]) == 0
@@ -1429,9 +1429,9 @@ def main() -> None:
     init_data_offset = header_name_end(rootfs, init_offset)
     init_script = rootfs[init_data_offset : init_data_offset + init_size]
     assert init_script == (project_root / "guest" / "rvcinit").read_bytes()
-    assert init_script.index(b"/fibonacci") < init_script.index(b"getty")
-    assert b"getty -l /bin/sh -n 0 /dev/ttyS0" in init_script
-    assert b"/dev/hvc0" not in init_script
+    assert init_script.index(b"/fibonacci") < init_script.index(b"/bin/sh -i")
+    assert b"/bin/sh -i" in init_script
+    assert b"TTY /dev/ttyS0" in init_script
     fibonacci_offset = named_entries["fibonacci"]
     fibonacci_info = struct.unpack_from(">I", rootfs, fibonacci_offset)[0] & 15
     fibonacci_size = struct.unpack_from(">I", rootfs, fibonacci_offset + 8)[0]

@@ -57,7 +57,7 @@ Linux 配置使用 [PiMaker/rvc](https://github.com/pimaker/rvc/tree/da936a719b4
 - ROMFS 映射到只读 MTD 窗口 `0x40000000`。
 - 内核命令行使用 `root=mtd:root rootfstype=romfs ro init=/rvcinit`。
 - `/rvcinit` 建立可写 overlay root，进入 chroot，并挂载 `/proc` 与 `/sys`。
-- 用户空间初始化完成后，`/rvcinit` 运行 `/fibonacci`，随后启动 `getty` 登录 shell。
+- 用户空间初始化完成后，`/rvcinit` 运行 `/fibonacci`，随后启动继承内核控制台的交互式 shell。
 
 [`tools/import_rvc_assets.py`](tools/import_rvc_assets.py) 从 rvc 的分通道 PNG 还原 payload、DTB 与 ROMFS。导入器将 DTB 内存大小写为 `0x00BFF000`，并让 OpenSBI 保持使用 `a1=0x1020` 指向的设备树。DTB 写事务按设备空操作完成，与 rvc 的窗口语义一致。
 
@@ -66,7 +66,7 @@ Linux payload 与 ROMFS 的固定校验值为：
 | 产物 | 有效字节数 | SHA-256 |
 | --- | ---: | --- |
 | OpenSBI + Linux payload | 8,305,028 | `75a060159e959c833df4305839705fdb185752cc6b730b0f3c72854a5d4b3de1` |
-| ROMFS | 56,471,216 | `37c7ac10158a58ae7a4b1b93cf8b59a0408dc33ab3b49233cbd2d14e51a328e1` |
+| ROMFS | 56,471,216 | `297725d0aa9f73442db1cd182f89bd1d753feb6535c50ac773934b4c83f77d10` |
 
 rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 Linux 用户空间、输出完整数列、以状态 0 返回并显示 `/ #`。参考轨迹约在 374 万条指令时从 OpenSBI 跳到 Linux 入口，并在第 45,320,395 个 guest 周期附近显示 shell prompt；Linux 建立页表后，PC 进入 `0xC...` 内核虚拟地址。Minecraft 中的墙钟时间由 GPU、分辨率、帧率上限和窗口状态共同决定。
 
@@ -74,11 +74,11 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 [`guest/fibonacci.S`](guest/fibonacci.S) 实现一个静态 RV32IMA Linux ELF。程序通过 `write(2)` 输出 48 个 32 位无符号斐波那契数，从 `F00 = 0000000000` 到 `F47 = 2971215073`，然后通过 `exit(2)` 返回状态 0。每条 UART 记录占用 32 字节，可在终端区域中按行显示。
 
-[`guest/rvcinit`](guest/rvcinit) 在 overlay chroot 初始化完成后同步运行 `/fibonacci`。程序返回后，PID 1 启动原有的 `getty` 循环。
+[`guest/rvcinit`](guest/rvcinit) 在 overlay chroot 初始化完成后同步运行 `/fibonacci`。程序返回后，PID 1 启动交互式 `/bin/sh`，shell 退出后由循环重新启动。
 
 ## 屏幕键盘
 
-`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。Linux 登录 shell 连接 `/dev/ttyS0`，与模拟 16550 UART 共用同一条收发链路。最终仪表盘覆盖该标记所在的屏幕区域。
+`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。Linux 交互式 shell 继承 `/dev/ttyS0` 控制台，与模拟 16550 UART 共用同一条收发链路。最终仪表盘覆盖该标记所在的屏幕区域。
 
 | 玩家输入 | 键盘操作 |
 | --- | --- |
