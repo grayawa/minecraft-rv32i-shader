@@ -31,9 +31,10 @@ const uint FRAMEBUFFER_BASE = 1024u;
 const uint UART_TX_HEAD_INDEX = 16307u;
 const uint UART_LINE_LENGTH_BASE = 4871u;
 const uint UART_LINE_COUNT = 32u;
+const uint KEYBOARD_SELECTION_INDEX = 4904u;
 const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;
 const uint UART_TX_BUFFER_BYTES = 1024u;
-const uint UART_TERMINAL_BYTES = 640u;
+const uint UART_TERMINAL_BYTES = 448u;
 const ivec2 FRAMEBUFFER_SIZE = ivec2(32, 18);
 
 ivec2 stateWordCoordinate(uint index) {
@@ -66,6 +67,7 @@ uint glyphBits(int code) {
     switch (code) {
         case 32: return 0x000000u; // space
         case 35: return 0x5F55F5u; // #
+        case 39: return 0x200002u; // '
         case 40: return 0x244442u; // (
         case 41: return 0x422224u; // )
         case 45: return 0x000F00u; // -
@@ -81,6 +83,12 @@ uint glyphBits(int code) {
         case 55: return 0x44421Fu; // 7
         case 56: return 0x699696u; // 8
         case 57: return 0x617996u; // 9
+        case 58: return 0x202002u; // :
+        case 59: return 0x202006u; // ;
+        case 60: return 0x842480u; // <
+        case 61: return 0x0F0F00u; // =
+        case 62: return 0x124210u; // >
+        case 63: return 0x202196u; // ?
         case 65: return 0x99F996u; // A
         case 66: return 0xE99E9Eu; // B
         case 67: return 0x788887u; // C
@@ -108,6 +116,7 @@ uint glyphBits(int code) {
         case 89: return 0x222699u; // Y
         case 90: return 0xF8421Fu; // Z
         case 91: return 0x644446u; // [
+        case 92: return 0x112244u; // backslash
         case 93: return 0x622226u; // ]
         case 95: return 0xF00000u; // _
         default: return 0u;
@@ -125,6 +134,17 @@ float glyphPixel(vec2 p, vec2 origin, int code, float scale) {
 
 int hexCode(uint value) {
     return value < 10u ? int(48u + value) : int(55u + value);
+}
+
+int keyboardGlyph(uint selection) {
+    const int keys[50] = int[50](
+        49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
+        81, 87, 69, 82, 84, 89, 85, 73, 79, 80,
+        65, 83, 68, 70, 71, 72, 74, 75, 76, 47,
+        90, 88, 67, 86, 66, 78, 77, 46, 45, 95,
+        95, 60, 69, 67, 61, 58, 59, 39, 63, 92
+    );
+    return keys[min(selection, 49u)];
 }
 
 float drawHex(vec2 p, vec2 origin, uint value, float scale) {
@@ -215,7 +235,7 @@ void main() {
         colour = pixelColour;
     }
 
-    // Linux uses the right panel as a 32-column, 20-row UART terminal.
+    // Linux uses the right panel as a UART terminal and on-screen keyboard.
     vec2 uartPanelOrigin = linuxView ? vec2(116.0, 16.0) : vec2(116.0, 134.0);
     vec2 uartPanelPixel = p - uartPanelOrigin;
     if (uartPanelPixel.x >= 0.0 && uartPanelPixel.x < 192.0
@@ -239,7 +259,7 @@ void main() {
     vec2 uartTextOrigin = linuxView ? vec2(143.0, 18.0) : vec2(143.0, 136.0);
     float uartRowStride = linuxView ? 7.0 : 8.0;
     vec2 uartTextPixel = p - uartTextOrigin;
-    int uartRows = linuxView ? 20 : 3;
+    int uartRows = linuxView ? 14 : 3;
     bool inUartText = uartTextPixel.x >= 0.0 && uartTextPixel.x < 160.0
                    && uartTextPixel.y >= 0.0
                    && uartTextPixel.y < float(uartRows) * uartRowStride;
@@ -266,6 +286,38 @@ void main() {
         }
     }
     colour = mix(colour, valueColour, uartInk);
+
+    if (linuxView) {
+        vec2 keyboardOrigin = vec2(143.0, 120.0);
+        vec2 keyboardPixel = p - keyboardOrigin;
+        bool inKeyboard = keyboardPixel.x >= 0.0 && keyboardPixel.x < 160.0
+                       && keyboardPixel.y >= 0.0 && keyboardPixel.y < 40.0;
+        if (inKeyboard) {
+            ivec2 keyCell = ivec2(floor(keyboardPixel / vec2(16.0, 8.0)));
+            uint keyIndex = uint(keyCell.y * 10 + keyCell.x);
+            vec2 withinKey = fract(keyboardPixel / vec2(16.0, 8.0));
+            float keyEdge = min(min(withinKey.x, 1.0 - withinKey.x),
+                                min(withinKey.y, 1.0 - withinKey.y));
+            bool selected = keyIndex == readStateWord(KEYBOARD_SELECTION_INDEX);
+            vec3 keyBackground = selected
+                ? vec3(0.08, 0.52, 0.64)
+                : vec3(0.012, 0.038, 0.052);
+            colour = mix(colour, keyBackground,
+                mix(0.48, 0.94, smoothstep(0.0, 0.10, keyEdge)));
+            float keyInk = glyphPixel(
+                p,
+                keyboardOrigin + vec2(float(keyCell.x) * 16.0 + 6.0,
+                                      float(keyCell.y) * 8.0 + 1.0),
+                keyboardGlyph(keyIndex),
+                1.0
+            );
+            colour = mix(colour, selected ? vec3(1.0) : valueColour, keyInk);
+        }
+        float keyboardLabel = glyphPixel(p, vec2(118.0, 121.0), 75, 1.0);
+        keyboardLabel = max(keyboardLabel,
+            glyphPixel(p, vec2(123.0, 121.0), 66, 1.0));
+        colour = mix(colour, textColour * 0.88, keyboardLabel);
+    }
 
     // A compact memory activity strip visualizes the first 128 RAM words.
     vec2 memoryOrigin = vec2(116.0, 164.0);

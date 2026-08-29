@@ -1,0 +1,13 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "mcrv:font/input.png",
+      "ascent": 64,
+      "height": 64,
+      "chars": [
+        ""
+      ]
+    }
+  ]
+}

@@ -1,6 +1,17 @@
 {
   "targets": {
     "scene": {},
+    "input": {
+      "width": 1,
+      "height": 1,
+      "persistent": false,
+      "clear_color": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
     "state_a": {
       "width": 128,
       "height": 128,
@@ -74,6 +85,17 @@
     },
     {
       "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "mcrv:post/rv32_input_capture",
+      "inputs": [
+        {
+          "sampler_name": "Scene",
+          "target": "scene"
+        }
+      ],
+      "output": "input"
+    },
+    {
+      "vertex_shader": "minecraft:core/screenquad",
       "fragment_shader": "mcrv:post/rv32_step",
       "inputs": [
         {
@@ -101,6 +123,10 @@
           "location": "mcrv:mtd_empty",
           "width": 4096,
           "height": 3447
+        },
+        {
+          "sampler_name": "Input",
+          "target": "input"
         }
       ],
       "output": "state_b"
@@ -172,6 +198,10 @@
           "location": "mcrv:mtd_empty",
           "width": 4096,
           "height": 3447
+        },
+        {
+          "sampler_name": "Input",
+          "target": "input"
         }
       ],
       "output": "state_b"

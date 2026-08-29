@@ -34,11 +34,11 @@ PROFILES = (
 )
 
 
-def target(width: int, height: int) -> dict[str, object]:
+def target(width: int, height: int, persistent: bool = True) -> dict[str, object]:
     return {
         "width": width,
         "height": height,
-        "persistent": True,
+        "persistent": persistent,
         "clear_color": [0.0, 0.0, 0.0, 0.0],
     }
 
@@ -63,6 +63,7 @@ def step_pass(state_input: str, state_output: str, ram: str,
             image_input("GuestImage", profile.guest, GUEST_WIDTH, GUEST_HEIGHT),
             image_input("DtbImage", profile.dtb, 1024, 1),
             image_input("MtdImage", profile.mtd, MTD_WIDTH, MTD_HEIGHT),
+            {"sampler_name": "Input", "target": "input"},
         ],
         "output": state_output,
     }
@@ -108,7 +109,13 @@ def build_profile(profile: Profile) -> dict[str, object]:
                 ]
             },
             "output": "scene",
-        }
+        },
+        {
+            "vertex_shader": "minecraft:core/screenquad",
+            "fragment_shader": "mcrv:post/rv32_input_capture",
+            "inputs": [{"sampler_name": "Scene", "target": "scene"}],
+            "output": "input",
+        },
     ]
 
     current_state = "state_a"
@@ -143,6 +150,7 @@ def build_profile(profile: Profile) -> dict[str, object]:
     return {
         "targets": {
             "scene": {},
+            "input": target(1, 1, persistent=False),
             "state_a": target(128, 128),
             "state_b": target(128, 128),
             "ram_a": target(RAM_WIDTH, RAM_HEIGHT),

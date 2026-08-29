@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 import struct
 from pathlib import Path
+
+from PIL import Image
 
 from assemble_demo import assemble
 from bin_to_texture import BOOT_DESCRIPTOR_WORDS, BOOT_MAGIC, decode_guest_texture
@@ -1115,15 +1118,95 @@ def main() -> None:
     display_shader = (
         project_root / "assets" / "mcrv" / "shaders" / "post" / "rv32_display.fsh"
     ).read_text(encoding="utf-8")
+    input_capture_shader = (
+        project_root / "assets" / "mcrv" / "shaders" / "post"
+        / "rv32_input_capture.fsh"
+    ).read_text(encoding="utf-8")
     assert "const uint UART_TX_BUFFER_OFFSET = RAM_BYTES;" in step_shader
     assert "const uint UART_TX_BUFFER_BYTES = 1024u;" in step_shader
     assert "const uint UART_LINE_LENGTH_BASE = 4871u;" in step_shader
+    assert "const uint UART_RX_READY_INDEX = 4906u;" in step_shader
+    assert "value = uartReceiveInterruptPending() ? 0x04u" in step_shader
+    assert "inputMarker != readStateWord(INPUT_MARKER_INDEX)" in step_shader
     assert "if (dtbAddressValid(address, width)) return true;" in step_shader
     assert "const uint LINUX_TIMER_DIVIDER = 40u;" in step_shader
     assert "outputWord = readStateWord(csrStateIndex(CSR_MIP)) & ~0x000000a0u;" in step_shader
     assert "const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;" in display_shader
     assert "const uint UART_TX_BUFFER_BYTES = 1024u;" in display_shader
-    assert "const uint UART_TERMINAL_BYTES = 640u;" in display_shader
+    assert "const uint UART_TERMINAL_BYTES = 448u;" in display_shader
+    assert "const uint KEYBOARD_SELECTION_INDEX = 4904u;" in display_shader
+    assert "for (int sampleIndex = 0; sampleIndex < 256; ++sampleIndex)" in input_capture_shader
+
+    keyboard_bytes = [
+        *b"1234567890",
+        *b"qwertyuiop",
+        *b"asdfghjkl/",
+        *b"zxcvbnm.-_",
+        32, 127, 13, 3, *b"=:;'?\\",
+    ]
+    step_keyboard_match = re.search(
+        r"const uint keys\[50\] = uint\[50\]\((.*?)\);",
+        step_shader,
+        re.DOTALL,
+    )
+    assert step_keyboard_match is not None
+    step_keyboard = [
+        int(value)
+        for value in re.findall(r"(\d+)u", step_keyboard_match.group(1))
+    ]
+    assert step_keyboard == keyboard_bytes
+    display_keyboard_match = re.search(
+        r"const int keys\[50\] = int\[50\]\((.*?)\);",
+        display_shader,
+        re.DOTALL,
+    )
+    assert display_keyboard_match is not None
+    display_keyboard = [
+        int(value) for value in re.findall(r"\d+", display_keyboard_match.group(1))
+    ]
+    assert display_keyboard[:40] == [
+        ord(character.upper()) if character.isalpha() else ord(character)
+        for character in bytes(keyboard_bytes[:40]).decode("ascii")
+    ]
+    assert display_keyboard[40:] == [95, 60, 69, 67, 61, 58, 59, 39, 63, 92]
+
+    input_font_path = (
+        project_root / "assets" / "mcrv" / "textures" / "font" / "input.png"
+    )
+    with Image.open(input_font_path) as input_font:
+        assert input_font.size == (1024, 64)
+        for marker_code in range(16):
+            assert input_font.getpixel((marker_code * 64 + 32, 32)) == (
+                250, 16 + marker_code * 14, 246, 255
+            )
+    input_font_definition = json.loads(
+        (project_root / "assets" / "mcrv" / "font" / "input.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert input_font_definition["providers"][0]["chars"] == [
+        "".join(chr(0xE000 + index) for index in range(16))
+    ]
+
+    datapack_root = project_root / "datapack" / "MCRVInput"
+    datapack_meta = json.loads((datapack_root / "pack.mcmeta").read_text("utf-8"))
+    assert datapack_meta["pack"]["min_format"] == [112, 0]
+    for direction, field in {
+        "up": "forward",
+        "down": "backward",
+        "left": "left",
+        "right": "right",
+        "confirm": "jump",
+        "backspace": "sneak",
+        "cancel": "sprint",
+    }.items():
+        predicate = json.loads(
+            (datapack_root / "data" / "mcrv" / "predicate" / "input"
+             / f"{direction}.json").read_text("utf-8")
+        )
+        assert predicate["type"] == "minecraft:entity_properties"
+        player_input = predicate["predicate"]["minecraft:type_specific/player"]["input"]
+        assert player_input == {field: True}
 
     texture_path = (
         project_root / "assets" / "mcrv" / "textures" / "effect" / "guest_demo.png"
@@ -1154,6 +1237,12 @@ def main() -> None:
         "clear_color": [0.0, 0.0, 0.0, 0.0],
     }
     assert post_effect["targets"]["ram_b"] == post_effect["targets"]["ram_a"]
+    assert post_effect["targets"]["input"] == {
+        "width": 1,
+        "height": 1,
+        "persistent": False,
+        "clear_color": [0.0, 0.0, 0.0, 0.0],
+    }
     for entry in step_passes:
         guest_input = next(
             item for item in entry["inputs"] if item["sampler_name"] == "GuestImage"
@@ -1174,6 +1263,7 @@ def main() -> None:
             "height": 1,
         }
         assert any(item["sampler_name"] == "Ram" for item in entry["inputs"])
+        assert any(item["sampler_name"] == "Input" for item in entry["inputs"])
 
     commit_passes = [
         entry for entry in post_effect["passes"]
@@ -1187,6 +1277,7 @@ def main() -> None:
         ]
     assert [entry["fragment_shader"] for entry in post_effect["passes"]] == [
         "minecraft:post/blit",
+        "mcrv:post/rv32_input_capture",
         "mcrv:post/rv32_step",
         "mcrv:post/rv32_ram_commit",
         "mcrv:post/rv32_cache_clear",
@@ -1236,10 +1327,10 @@ def main() -> None:
         }
 
     linux_profiles = {
-        "rv32i_linux": (64, 70),
-        "rv32i_linux_fast": (128, 134),
-        "rv32i_linux_turbo": (256, 262),
-        "rv32i_linux_ultra": (512, 518),
+        "rv32i_linux": (64, 71),
+        "rv32i_linux_fast": (128, 135),
+        "rv32i_linux_turbo": (256, 263),
+        "rv32i_linux_ultra": (512, 519),
     }
     for profile_name, (instruction_count, pass_count) in linux_profiles.items():
         linux_effect_path = (
@@ -1431,7 +1522,8 @@ def main() -> None:
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
         "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
         "12 MiB RAM DTB, Fibonacci ROMFS user program, 1 KiB UART ring, "
-        "rvc timer semantics and Linux profiles up to 512 instructions/frame"
+        "50-key input bridge, rvc timer semantics and Linux profiles up to 512 "
+        "instructions/frame"
     )
 
 

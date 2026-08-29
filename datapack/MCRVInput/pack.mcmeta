@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "description": "MCRV on-screen keyboard input bridge",
+    "min_format": [112, 0],
+    "max_format": [112, 0]
+  }
+}

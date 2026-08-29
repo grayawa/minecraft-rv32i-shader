@@ -6,6 +6,7 @@ uniform sampler2D RamSampler;
 uniform sampler2D GuestImageSampler;
 uniform sampler2D DtbImageSampler;
 uniform sampler2D MtdImageSampler;
+uniform sampler2D InputSampler;
 
 layout(location = 0) in vec2 texCoord;
 
@@ -16,6 +17,7 @@ layout(std140) uniform SamplerInfo {
     vec2 GuestImageSize;
     vec2 DtbImageSize;
     vec2 MtdImageSize;
+    vec2 InputSize;
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -137,6 +139,10 @@ const uint RTC_LOW_INDEX = 4869u;
 const uint RTC_HIGH_INDEX = 4870u;
 const uint UART_LINE_LENGTH_BASE = 4871u;
 const uint UART_LINE_COUNT = 32u;
+const uint INPUT_MARKER_INDEX = 4903u;
+const uint KEYBOARD_SELECTION_INDEX = 4904u;
+const uint UART_RX_DATA_INDEX = 4905u;
+const uint UART_RX_READY_INDEX = 4906u;
 
 const uint PRIVILEGE_USER = 0u;
 const uint PRIVILEGE_SUPERVISOR = 1u;
@@ -185,6 +191,10 @@ uint readStateWord(uint index) {
         return 0u;
     }
     return decodeWord(texelFetch(StateSampler, stateWordCoordinate(index), 0));
+}
+
+uint readInputWord() {
+    return decodeWord(texelFetch(InputSampler, ivec2(0), 0));
 }
 
 uint readGuestWord(uint index) {
@@ -263,6 +273,41 @@ bool linuxGuestPresent() {
     return readMtdWord(MTD_BASE_ADDRESS) == 0x6d6f722du; // "-rom"
 }
 
+bool uartReceiveInterruptPending() {
+    return readStateWord(UART_RX_READY_INDEX) != 0u
+        && (readStateWord(UART_IER_INDEX) & 0x1u) != 0u;
+}
+
+bool uartTransmitInterruptPending() {
+    return readStateWord(UART_PENDING_INDEX) != 0u
+        && (readStateWord(UART_IER_INDEX) & 0x2u) != 0u;
+}
+
+bool uartInterruptPending() {
+    return uartReceiveInterruptPending() || uartTransmitInterruptPending();
+}
+
+uint keyboardByte(uint selection) {
+    const uint keys[50] = uint[50](
+        49u, 50u, 51u, 52u, 53u, 54u, 55u, 56u, 57u, 48u,
+        113u, 119u, 101u, 114u, 116u, 121u, 117u, 105u, 111u, 112u,
+        97u, 115u, 100u, 102u, 103u, 104u, 106u, 107u, 108u, 47u,
+        122u, 120u, 99u, 118u, 98u, 110u, 109u, 46u, 45u, 95u,
+        32u, 127u, 13u, 3u, 61u, 58u, 59u, 39u, 63u, 92u
+    );
+    return keys[min(selection, 49u)];
+}
+
+uint moveKeyboardSelection(uint selection, uint inputEvent) {
+    uint row = min(selection, 49u) / 10u;
+    uint column = min(selection, 49u) % 10u;
+    if (inputEvent == 1u) row = (row + 4u) % 5u;
+    if (inputEvent == 2u) row = (row + 1u) % 5u;
+    if (inputEvent == 3u) column = (column + 9u) % 10u;
+    if (inputEvent == 4u) column = (column + 1u) % 10u;
+    return row * 10u + column;
+}
+
 uint clintStateIndex(uint address) {
     if (address == CLINT_MSIP_ADDRESS) return CLINT_MSIP_INDEX;
     if (address == CLINT_MTIMECMP_LOW_ADDRESS) return CLINT_MTIMECMP_LOW_INDEX;
@@ -283,7 +328,7 @@ bool plicInterruptEligible(bool supervisorContext) {
     uint threshold = readStateWord(thresholdIndex);
     bool enabled = (readStateWord(enableIndex)
         & (1u << UART_INTERRUPT_SOURCE)) != 0u;
-    return readStateWord(UART_PENDING_INDEX) != 0u
+    return uartInterruptPending()
         && readStateWord(claimedIndex) == 0u
         && enabled && priority > threshold;
 }
@@ -337,22 +382,24 @@ uint readPhysicalWord(uint address) {
         uint lcr = readStateWord(UART_LCR_INDEX) & 0xffu;
         bool divisorLatch = (lcr & 0x80u) != 0u;
         uint value = 0u;
-        if (registerOffset == 1u && !divisorLatch) {
+        if (registerOffset == 0u && !divisorLatch) {
+            value = readStateWord(UART_RX_DATA_INDEX) & 0xffu;
+        } else if (registerOffset == 1u && !divisorLatch) {
             value = readStateWord(UART_IER_INDEX) & 0x0fu;
         } else if (registerOffset == 2u) {
-            bool pending = readStateWord(UART_PENDING_INDEX) != 0u
-                && (readStateWord(UART_IER_INDEX) & 0x2u) != 0u;
-            value = pending ? 0x02u : 0x01u;
+            value = uartReceiveInterruptPending() ? 0x04u
+                  : uartTransmitInterruptPending() ? 0x02u
+                  : 0x01u;
         } else if (registerOffset == 3u) {
             value = lcr;
         } else if (registerOffset == 5u) {
-            value = 0x60u;
+            value = 0x60u | (readStateWord(UART_RX_READY_INDEX) != 0u ? 0x01u : 0u);
         }
         return value << ((address & 3u) * 8u);
     }
     if (address == PLIC_PRIORITY_ADDRESS) return readStateWord(PLIC_PRIORITY_INDEX);
     if (address == PLIC_PENDING_ADDRESS) {
-        return readStateWord(UART_PENDING_INDEX) != 0u
+        return uartInterruptPending()
             ? 1u << UART_INTERRUPT_SOURCE : 0u;
     }
     if (address == PLIC_ENABLE_ADDRESS) return readStateWord(PLIC_ENABLE_INDEX);
@@ -1095,6 +1142,20 @@ void main() {
     bool uartWrite = writeMemory && uartAccessValid(memoryAddress, memoryWidth);
     bool uartDivisorLatch = (readStateWord(UART_LCR_INDEX) & 0x80u) != 0u;
     bool uartTransmit = uartWrite && uartOffset == 0u && !uartDivisorLatch;
+    bool uartReceiveRead = !writeMemory && memoryWidth > 0u
+        && memoryAddress == UART_BASE_ADDRESS && !uartDivisorLatch;
+    uint inputMarker = readInputWord() & 0xffu;
+    bool inputChanged = linuxGuestPresent() && inputMarker != 0u
+        && inputMarker != readStateWord(INPUT_MARKER_INDEX);
+    uint inputEvent = inputMarker == 0u ? 0u : (inputMarker - 1u) & 0x7u;
+    uint keyboardSelection = readStateWord(KEYBOARD_SELECTION_INDEX);
+    uint nextKeyboardSelection = moveKeyboardSelection(keyboardSelection, inputEvent);
+    bool inputByteRequested = inputChanged && inputEvent >= 5u;
+    uint inputByte = inputEvent == 6u ? 127u
+                   : inputEvent == 7u ? 3u
+                   : keyboardByte(keyboardSelection);
+    bool inputByteAccepted = inputByteRequested
+        && (readStateWord(UART_RX_READY_INDEX) == 0u || uartReceiveRead);
 
     bool cacheWrite = writeMemory && ramAddressValid(memoryAddress, memoryWidth);
     uint cacheWriteAddress = memoryAddress;
@@ -1181,6 +1242,16 @@ void main() {
     if (outputIndex == PRIVILEGE_INDEX) outputWord = nextPrivilege;
     if (outputIndex == RESERVATION_ADDRESS_INDEX) outputWord = nextReservationAddress;
     if (outputIndex == RESERVATION_VALID_INDEX) outputWord = nextReservationValid;
+    if (inputChanged && outputIndex == INPUT_MARKER_INDEX) outputWord = inputMarker;
+    if (inputChanged && inputEvent >= 1u && inputEvent <= 4u
+            && outputIndex == KEYBOARD_SELECTION_INDEX) {
+        outputWord = nextKeyboardSelection;
+    }
+    if (uartReceiveRead && outputIndex == UART_RX_READY_INDEX) outputWord = 0u;
+    if (inputByteAccepted && outputIndex == UART_RX_DATA_INDEX) {
+        outputWord = inputByte;
+    }
+    if (inputByteAccepted && outputIndex == UART_RX_READY_INDEX) outputWord = 1u;
 
     if (writeRegister && destinationRegister != 0u
             && outputIndex == REGISTER_BASE + destinationRegister) {

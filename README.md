@@ -9,10 +9,11 @@
 ## 快速开始
 
 1. 下载 [`MinecraftRV32IShader-26.3-snapshot-5.zip`](dist/MinecraftRV32IShader-26.3-snapshot-5.zip)。
-2. 将 ZIP 放入当前 Minecraft 实例的 `resourcepacks` 目录。
-3. 在“选项 → 资源包”中启用 **Minecraft RV32IMA**。
-4. 进入具有命令权限的世界。
-5. 选择一个运行配置：
+2. 将资源包 ZIP 放入当前 Minecraft 实例的 `resourcepacks` 目录。
+3. 下载 [`MCRVInput-26.3-snapshot-5.zip`](dist/MCRVInput-26.3-snapshot-5.zip)，并将它放入世界存档的 `datapacks` 目录。
+4. 在“选项 → 资源包”中启用 **Minecraft RV32IMA**。
+5. 进入具有命令权限的世界并执行 `/reload`。
+6. 选择一个运行配置：
 
    ```mcfunction
    /posteffect add @s mcrv:rv32i_linux
@@ -26,7 +27,7 @@
 
 按 `F3+T` 重新加载资源，然后再次添加效果。窗口尺寸变化也会重新初始化 persistent target。
 
-三个运行配置共用同一套 CPU 核心：
+六个运行配置共用同一套 CPU 核心：
 
 | Post Effect | 每帧指令数 | Guest | 用途 |
 | --- | ---: | --- | --- |
@@ -68,6 +69,28 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 [`guest/rvcinit`](guest/rvcinit) 在 overlay chroot 初始化完成后同步运行 `/fibonacci`。程序返回后，PID 1 启动原有的 `getty` 循环。
 
+## 屏幕键盘
+
+`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。数据包使用标题层中的自定义字体色码传递事件；`rv32_input_capture` pass 每帧解码一次色码，并将确认字符送入 UART RX。
+
+| 玩家输入 | 键盘操作 |
+| --- | --- |
+| 移动键位，默认为 W/A/S/D | 上、左、下、右移动光标 |
+| 跳跃键位，默认为 Space | 输入选中的字符 |
+| 潜行键位，默认为 Shift | 输入 Backspace |
+| 疾跑键位，默认为 Ctrl | 输入 Ctrl-C |
+
+键盘包含数字、小写英文字母、常用 shell 标点与一行控制键。最后一行显示 `_ < E C = : ; ' ? \`：`_` 输入空格，`<` 输入 Backspace，`E` 输入 Enter，`C` 输入 Ctrl-C。方向移动在键盘边缘循环。
+
+输入事件使用交替序列位区分连续按键。UART 提供 RBR、LSR Data Ready、IIR receive-data-available 原因和 PLIC source 10 接收中断。标题色码位于仪表盘覆盖区域，资源包负责生成对应的 16 色字体纹理。输入时保持游戏 HUD 可见，并让游戏窗口拥有键盘焦点。
+
+数据包默认向进入世界的玩家启用输入桥。临时关闭与重新启用可分别执行：
+
+```mcfunction
+/function mcrv:input/disable
+/function mcrv:input/enable
+```
+
 ## 仪表盘
 
 显示 pass 将场景与 320 × 180 虚拟仪表盘合成：
@@ -80,7 +103,8 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 - 绿色指示灯：CPU 正在运行。
 - 金色指示灯：CPU 到达 EBREAK。
 - 自检视图右侧 32 × 18 区域：地址 `0x00001000` 的测试 framebuffer。
-- Linux 视图右侧 32 × 20 区域：UART 终端中最新的 640 个字符单元。
+- Linux 视图右侧上方 32 × 14 区域：UART 终端中最新的 448 个字符单元。
+- Linux 视图右侧下方 10 × 5 区域：屏幕键盘与当前选择。
 - Linux UART 换行会推进到下一行，行宽为 32 个字符。
 - 自检视图底部色带：RAM 活动采样。
 
@@ -129,7 +153,7 @@ OpenSBI 阶段的 PC 主要位于 `0x800...`。进入 Linux payload 时 PC 会�
 | `0x40000000`–`0x435DBFFF` | ROMFS MTD 纹理窗口 |
 | `0x80000000`–`0x80BFEFFF` | Linux 配置的 guest RAM |
 
-UART 覆盖 THR、IER、IIR、LCR 与 LSR。LSR 返回 THRE/TEMT，LCR.DLAB 控制 divisor-latch 访问。发送字节写入 RAM target 的 4 KiB 保护页，1 KiB 环形缓冲区位于保护页起始位置。Linux 终端使用 32 个行长度状态槽保持换行布局。
+UART 覆盖 RBR、THR、IER、IIR、LCR 与 LSR。LSR 返回 Data Ready、THRE/TEMT，IIR 区分接收数据与发送保持寄存器中断，LCR.DLAB 控制 divisor-latch 访问。发送字节写入 RAM target 的 4 KiB 保护页，1 KiB 环形缓冲区位于保护页起始位置。Linux 终端使用 32 个行长度状态槽保持换行布局。
 
 Linux profile 的 `mtime` 每 40 个 CPU pass 增加一次，对应 rvc 来宾 DTB 的 5 kHz timebase。写入 `mtimecmp` 会完成本次 timer event，并清除 `MTIP/STIP` pending 位。内置自检 profile 使用逐指令 `mtime`。
 
@@ -152,18 +176,21 @@ A = bits 31..24
 | DTB image | 1024 × 1 | 4 KiB DTB window |
 | MTD image | 4096 × 3447 | 56,475,648-byte 只读窗口 |
 
-RAM target 的前 `0x00BFF000` 字节属于 guest；末尾 4 KiB 保存 shader 设备数据与 RAM 初始化标记。Linux profile 每帧执行两个 32 指令半批次。每个半批次使用 64 组、4 路、共 256 个单词槽的写缓存，然后由一次全尺寸 RAM pass 统一提交，再清理缓存有效位。
+RAM target 的前 `0x00BFF000` 字节属于 guest；末尾 4 KiB 保存 shader 设备数据与 RAM 初始化标记。标准 Linux profile 每帧执行两个 32 指令半批次；Fast、Turbo 与 Ultra 分别使用 64、128 与 256 指令半批次。每个半批次使用 64 组、4 路、共 256 个单词槽的写缓存，然后由一次全尺寸 RAM pass 统一提交，再清理缓存有效位。
 
 ```text
 scene copy
-32 × CPU step (state ping-pong, ram_a)
+input marker capture (scene → 1 × 1 input target)
+N × CPU step (state ping-pong, ram_a)
 RAM commit (ram_a → ram_b)
 cache clear
-32 × CPU step (state ping-pong, ram_b)
+N × CPU step (state ping-pong, ram_b)
 RAM commit (ram_b → ram_a)
 cache clear
 dashboard
 ```
+
+其中 `N` 在标准、Fast、Turbo 与 Ultra Linux profile 中依次为 32、64、128 与 256。每个 CPU step 读取同一帧的 1 × 1 输入 target；状态中的事件序列位保证一次玩家按键只改变一次键盘状态。
 
 写缓存满组时，当前指令保持 PC 并等待本半批次结束。`0x0B0`–`0x0B3` 自定义 CSR 承载 rvc 的批量内存复制协议，RAM commit pass 可在一个 GPU pass 中完成 Linux 的大块复制。
 
@@ -190,6 +217,7 @@ boot descriptor 位于 guest image 的最后 16 字节：
 
 ```powershell
 python tools/build_post_effect.py
+python tools/build_input_font.py
 ```
 
 从固定 rvc revision 导入 Linux 产物：
@@ -217,18 +245,19 @@ python tools/bin_to_texture.py programs/mcrv.dtb assets/mcrv/textures/effect/dtb
 python tools/test_demo.py
 ```
 
-测试会重建内置机器码，执行 2815 条指令的参考模型，运行斐波那契 ELF 的 syscall 级参考执行，并校验 shader 常量、三份 pass graph、boot descriptor、DTB、Linux payload、ROMFS 目录与哈希。`tools/ShadercCheck.java` 可配合 Minecraft 附带的 LWJGL ShaderC 3.4.2 编译四个片元 shader。
+测试会重建内置机器码，执行 2815 条指令的参考模型，运行斐波那契 ELF 的 syscall 级参考执行，并校验 shader 常量、六份 pass graph、屏幕键盘映射、输入字体、数据包谓词、boot descriptor、DTB、Linux payload、ROMFS 目录与哈希。`tools/ShadercCheck.java` 可配合 Minecraft 附带的 LWJGL ShaderC 3.4.2 编译五个片元 shader。
 
 构建发布 ZIP：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/package.ps1
+powershell -ExecutionPolicy Bypass -File tools/package_datapack.ps1
 ```
 
 ## 设计来源与许可证
 
 [PiMaker/rvc](https://github.com/pimaker/rvc) 提供了整数纹理 CPU 状态、HLSL shader 执行模型、rvc 专用 Linux、OpenSBI 启动约定与 ROMFS 构建产物。本项目将这些机制适配到 Minecraft Post Effect、RGBA8 persistent target、GLSL 330、资源包生命周期与游戏内仪表盘。
 
-指令行为依据 [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)。Minecraft 资源格式依据 [25w16a Post Effect 更新](https://www.minecraft.net/en-us/article/minecraft-snapshot-25w16a) 与 [26.3 Snapshot 3 `/posteffect`](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-3)。
+指令行为依据 [RISC-V Unprivileged ISA](https://docs.riscv.org/reference/isa/unpriv/unpriv-index.html)。Minecraft 资源格式依据 [25w16a Post Effect 更新](https://www.minecraft.net/en-us/article/minecraft-snapshot-25w16a)、[26.3 Snapshot 3 `/posteffect`](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-3)、[24w36a 玩家输入谓词](https://feedback.minecraft.net/hc/en-us/articles/29941004144525-Minecraft-Java-Edition-Snapshot-24w36a) 与 [26.2 Snapshot 3 实体谓词格式](https://feedback.minecraft.net/hc/en-us/articles/45491765809037-Minecraft-Java-Edition-26-2-Snapshot-3)。
 
 项目代码使用 [MIT License](LICENSE.txt)。Linux 配置附带的第三方组件采用各自许可证，版本与来源记录见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
