@@ -78,7 +78,7 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 ## 屏幕键盘
 
-`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。Linux 交互式 shell 继承内核控制台，SBI console 经 OpenSBI 连接模拟 16550 UART，形成完整的收发链路。最终仪表盘覆盖该标记所在的屏幕区域。
+`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。跳跃确认同时读取实时玩家输入与累计跳跃统计，每次实际起跳都能形成一次确认事件。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。Linux 交互式 shell 继承内核控制台，SBI console 经 OpenSBI 连接模拟 16550 UART，形成完整的收发链路。最终仪表盘覆盖该标记所在的屏幕区域。
 
 | 玩家输入 | 键盘操作 |
 | --- | --- |
@@ -98,6 +98,13 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 ```mcfunction
 /function mcrv:input/disable
 /function mcrv:input/enable
+```
+
+输入诊断 actionbar 显示最近事件 `LAST`、当前输入 `NOW`、累计实际起跳次数 `JUMP` 与事件序列位 `PH`。Space 对应事件 `5`。诊断的启用与关闭命令为：
+
+```mcfunction
+/function mcrv:input/debug
+/function mcrv:input/debug_off
 ```
 
 ## 仪表盘

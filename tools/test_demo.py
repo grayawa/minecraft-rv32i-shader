@@ -1215,6 +1215,9 @@ def main() -> None:
     ).read_text("utf-8")
     assert "scoreboard objectives add mcrv_hold dummy" in datapack_load
     assert "scoreboard objectives add mcrv_owner dummy" in datapack_load
+    assert "scoreboard objectives add mcrv_jump minecraft.custom:minecraft.jump" in datapack_load
+    assert "scoreboard objectives add mcrv_jump_prev dummy" in datapack_load
+    assert "scoreboard objectives add mcrv_debug dummy" in datapack_load
     assert "kill @e[type=minecraft:text_display,tag=mcrv_input_marker]" in datapack_load
     assert "title @a clear" in datapack_load
     assert "if score @s mcrv_hold matches 10.. run function mcrv:input/emit" in datapack_poll
@@ -1222,11 +1225,24 @@ def main() -> None:
     assert "execute positioned ^ ^ ^0.4 as @e" in datapack_poll
     assert "run tp @s ~ ~ ~" in datapack_poll
     assert "summon minecraft:text_display ^ ^ ^0.4" in datapack_init
+    assert "scoreboard players operation @s mcrv_jump_prev = @s mcrv_jump" in datapack_init
     assert 'billboard:"center"' in datapack_init
     assert "scale:[0.05f,0.05f,0.05f]" in datapack_init
     assert "run data merge entity @s {text:" in datapack_emit
     assert " run title " not in datapack_emit
     assert "at @s anchored eyes run function mcrv:input/poll" in datapack_tick
+    assert "if score @s mcrv_jump > @s mcrv_jump_prev" in datapack_poll
+    assert "scoreboard players operation @s mcrv_jump_prev = @s mcrv_jump" in datapack_poll
+    assert "scoreboard players operation @s mcrv_debug = @s mcrv_input" in datapack_poll
+    assert "title @s actionbar" in datapack_poll
+    datapack_debug = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "debug.mcfunction"
+    ).read_text("utf-8")
+    datapack_debug_off = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "debug_off.mcfunction"
+    ).read_text("utf-8")
+    assert "tag @s add mcrv_input_debug" in datapack_debug
+    assert "tag @s remove mcrv_input_debug" in datapack_debug_off
     for direction, field in {
         "up": "forward",
         "down": "backward",
