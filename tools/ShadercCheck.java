@@ -1,5 +1,7 @@
 import static org.lwjgl.util.shaderc.Shaderc.*;
+import static org.lwjgl.system.MemoryUtil.*;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -29,19 +31,30 @@ public final class ShadercCheck {
                 int kind = fileName.endsWith(".vsh")
                         ? shaderc_glsl_vertex_shader
                         : shaderc_glsl_fragment_shader;
-                long result = shaderc_compile_into_spv(
-                        compiler, source, kind, path.getFileName().toString(), "main", options);
+                ByteBuffer sourceBuffer = memUTF8(source, false);
+                ByteBuffer fileNameBuffer = memUTF8(path.getFileName().toString(), true);
+                ByteBuffer entryPointBuffer = memUTF8("main", true);
                 try {
-                    int status = shaderc_result_get_compilation_status(result);
-                    String message = shaderc_result_get_error_message(result);
-                    if (status == shaderc_compilation_status_success) {
-                        System.out.println("SHADER OK " + path);
-                    } else {
-                        failed = true;
-                        System.err.println("SHADER BAD " + path + System.lineSeparator() + message);
+                    long result = shaderc_compile_into_spv(
+                            compiler, sourceBuffer, kind, fileNameBuffer,
+                            entryPointBuffer, options);
+                    try {
+                        int status = shaderc_result_get_compilation_status(result);
+                        String message = shaderc_result_get_error_message(result);
+                        if (status == shaderc_compilation_status_success) {
+                            System.out.println("SHADER OK " + path);
+                        } else {
+                            failed = true;
+                            System.err.println("SHADER BAD " + path
+                                    + System.lineSeparator() + message);
+                        }
+                    } finally {
+                        shaderc_result_release(result);
                     }
                 } finally {
-                    shaderc_result_release(result);
+                    memFree(sourceBuffer);
+                    memFree(fileNameBuffer);
+                    memFree(entryPointBuffer);
                 }
             }
             if (failed) {

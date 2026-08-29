@@ -144,6 +144,17 @@ const uint KEYBOARD_SELECTION_INDEX = 4904u;
 const uint UART_RX_DATA_INDEX = 4905u;
 const uint UART_RX_READY_INDEX = 4906u;
 const uint RAM_PAGE_INDEX = 4907u;
+const uint TERMINAL_CELL_BASE = 4908u;
+const uint TERMINAL_COLUMNS = 32u;
+const uint TERMINAL_ROWS = 14u;
+const uint TERMINAL_CELL_COUNT = TERMINAL_COLUMNS * TERMINAL_ROWS;
+const uint TERMINAL_CURSOR_X_INDEX = TERMINAL_CELL_BASE + TERMINAL_CELL_COUNT;
+const uint TERMINAL_CURSOR_Y_INDEX = TERMINAL_CURSOR_X_INDEX + 1u;
+const uint TERMINAL_ESCAPE_STATE_INDEX = TERMINAL_CURSOR_Y_INDEX + 1u;
+const uint TERMINAL_CSI_PARAM0_INDEX = TERMINAL_ESCAPE_STATE_INDEX + 1u;
+const uint TERMINAL_CSI_PARAM1_INDEX = TERMINAL_CSI_PARAM0_INDEX + 1u;
+const uint TERMINAL_CSI_PARAM_INDEX = TERMINAL_CSI_PARAM1_INDEX + 1u;
+const uint TERMINAL_STYLE_INDEX = TERMINAL_CSI_PARAM_INDEX + 1u;
 
 const uint PRIVILEGE_USER = 0u;
 const uint PRIVILEGE_SUPERVISOR = 1u;
@@ -297,6 +308,20 @@ uint keyboardByte(uint selection) {
         32u, 127u, 13u, 3u, 61u, 58u, 59u, 39u, 63u, 92u
     );
     return keys[min(selection, 49u)];
+}
+
+uint applyTerminalSgr(uint style, uint parameter) {
+    if (parameter == 0u) return 0u;
+    if (parameter == 1u) return style | 0x100u;
+    if (parameter == 22u) return style & ~0x100u;
+    if (parameter == 39u) return style & ~0x1fu;
+    if (parameter >= 30u && parameter <= 37u) {
+        return (style & ~0x1fu) | (parameter - 30u + 1u);
+    }
+    if (parameter >= 90u && parameter <= 97u) {
+        return (style & ~0x1fu) | (parameter - 90u + 9u);
+    }
+    return style;
 }
 
 uint moveKeyboardSelection(uint selection, uint inputEvent) {
@@ -1230,6 +1255,155 @@ void main() {
         uartTransmit = false;
     }
 
+    bool terminalUpdate = uartTransmit && linuxGuestPresent();
+    uint nextTerminalCursorX = 0u;
+    uint nextTerminalCursorY = 0u;
+    uint nextTerminalEscapeState = 0u;
+    uint nextTerminalParam0 = 0u;
+    uint nextTerminalParam1 = 0u;
+    uint nextTerminalParamIndex = 0u;
+    uint nextTerminalStyle = 0u;
+    bool terminalScroll = false;
+    bool terminalErase = false;
+    uint terminalEraseFirst = 0u;
+    uint terminalEraseLast = 0u;
+    bool terminalWriteCell = false;
+    uint terminalWriteIndex = 0u;
+    uint terminalWriteValue = 0u;
+    if (terminalUpdate) {
+        nextTerminalCursorX = min(readStateWord(TERMINAL_CURSOR_X_INDEX), TERMINAL_COLUMNS);
+        nextTerminalCursorY = min(readStateWord(TERMINAL_CURSOR_Y_INDEX), TERMINAL_ROWS - 1u);
+        nextTerminalEscapeState = readStateWord(TERMINAL_ESCAPE_STATE_INDEX);
+        nextTerminalParam0 = readStateWord(TERMINAL_CSI_PARAM0_INDEX);
+        nextTerminalParam1 = readStateWord(TERMINAL_CSI_PARAM1_INDEX);
+        nextTerminalParamIndex = min(readStateWord(TERMINAL_CSI_PARAM_INDEX), 1u);
+        nextTerminalStyle = readStateWord(TERMINAL_STYLE_INDEX) & 0x11fu;
+
+        uint terminalByte = memoryValue & 0xffu;
+        if (nextTerminalEscapeState == 0u) {
+            if (terminalByte == 27u) {
+                nextTerminalEscapeState = 1u;
+            } else if (terminalByte == 13u) {
+                nextTerminalCursorX = 0u;
+            } else if (terminalByte == 10u) {
+                if (nextTerminalCursorY + 1u >= TERMINAL_ROWS) {
+                    terminalScroll = true;
+                    nextTerminalCursorY = TERMINAL_ROWS - 1u;
+                } else {
+                    nextTerminalCursorY += 1u;
+                }
+            } else if (terminalByte == 8u) {
+                if (nextTerminalCursorX > 0u) nextTerminalCursorX -= 1u;
+            } else if (terminalByte == 9u) {
+                nextTerminalCursorX = min(
+                    ((nextTerminalCursorX / 8u) + 1u) * 8u,
+                    TERMINAL_COLUMNS
+                );
+            } else if (terminalByte >= 32u && terminalByte <= 126u) {
+                uint writeX = nextTerminalCursorX;
+                uint writeY = nextTerminalCursorY;
+                if (writeX >= TERMINAL_COLUMNS) {
+                    writeX = 0u;
+                    if (writeY + 1u >= TERMINAL_ROWS) {
+                        terminalScroll = true;
+                        writeY = TERMINAL_ROWS - 1u;
+                    } else {
+                        writeY += 1u;
+                    }
+                }
+                terminalWriteCell = true;
+                terminalWriteIndex = writeY * TERMINAL_COLUMNS + writeX;
+                terminalWriteValue = terminalByte | (nextTerminalStyle << 8u);
+                nextTerminalCursorX = writeX + 1u;
+                nextTerminalCursorY = writeY;
+            }
+        } else if (nextTerminalEscapeState == 1u) {
+            if (terminalByte == 91u) {
+                nextTerminalEscapeState = 2u;
+                nextTerminalParam0 = 0u;
+                nextTerminalParam1 = 0u;
+                nextTerminalParamIndex = 0u;
+            } else {
+                nextTerminalEscapeState = 0u;
+            }
+        } else {
+            if (terminalByte >= 48u && terminalByte <= 57u) {
+                uint digit = terminalByte - 48u;
+                if (nextTerminalParamIndex == 0u) {
+                    nextTerminalParam0 = min(nextTerminalParam0 * 10u + digit, 999u);
+                } else {
+                    nextTerminalParam1 = min(nextTerminalParam1 * 10u + digit, 999u);
+                }
+            } else if (terminalByte == 59u) {
+                nextTerminalParamIndex = 1u;
+            } else if (terminalByte == 63u || terminalByte == 62u
+                    || terminalByte == 33u) {
+                // CSI private and intermediate prefixes retain the current parameters.
+            } else {
+                uint amount = nextTerminalParam0 == 0u ? 1u : nextTerminalParam0;
+                uint cursorLinear = nextTerminalCursorY * TERMINAL_COLUMNS
+                    + min(nextTerminalCursorX, TERMINAL_COLUMNS);
+                if (terminalByte == 65u) {
+                    nextTerminalCursorY = amount > nextTerminalCursorY
+                        ? 0u : nextTerminalCursorY - amount;
+                } else if (terminalByte == 66u) {
+                    nextTerminalCursorY = min(nextTerminalCursorY + amount,
+                        TERMINAL_ROWS - 1u);
+                } else if (terminalByte == 67u) {
+                    nextTerminalCursorX = min(nextTerminalCursorX + amount,
+                        TERMINAL_COLUMNS);
+                } else if (terminalByte == 68u) {
+                    nextTerminalCursorX = amount > nextTerminalCursorX
+                        ? 0u : nextTerminalCursorX - amount;
+                } else if (terminalByte == 71u) {
+                    nextTerminalCursorX = min(amount - 1u, TERMINAL_COLUMNS - 1u);
+                } else if (terminalByte == 72u || terminalByte == 102u) {
+                    uint column = nextTerminalParam1 == 0u ? 1u : nextTerminalParam1;
+                    nextTerminalCursorY = min(amount - 1u, TERMINAL_ROWS - 1u);
+                    nextTerminalCursorX = min(column - 1u, TERMINAL_COLUMNS - 1u);
+                } else if (terminalByte == 74u) {
+                    terminalErase = true;
+                    if (nextTerminalParam0 == 1u) {
+                        terminalEraseFirst = 0u;
+                        terminalEraseLast = min(cursorLinear, TERMINAL_CELL_COUNT - 1u);
+                    } else if (nextTerminalParam0 == 2u || nextTerminalParam0 == 3u) {
+                        terminalEraseFirst = 0u;
+                        terminalEraseLast = TERMINAL_CELL_COUNT - 1u;
+                    } else {
+                        terminalEraseFirst = min(cursorLinear, TERMINAL_CELL_COUNT);
+                        terminalEraseLast = TERMINAL_CELL_COUNT - 1u;
+                        terminalErase = terminalEraseFirst < TERMINAL_CELL_COUNT;
+                    }
+                } else if (terminalByte == 75u) {
+                    uint rowStart = nextTerminalCursorY * TERMINAL_COLUMNS;
+                    uint column = min(nextTerminalCursorX, TERMINAL_COLUMNS - 1u);
+                    terminalErase = true;
+                    if (nextTerminalParam0 == 1u) {
+                        terminalEraseFirst = rowStart;
+                        terminalEraseLast = rowStart + column;
+                    } else if (nextTerminalParam0 == 2u) {
+                        terminalEraseFirst = rowStart;
+                        terminalEraseLast = rowStart + TERMINAL_COLUMNS - 1u;
+                    } else {
+                        terminalEraseFirst = rowStart + column;
+                        terminalEraseLast = rowStart + TERMINAL_COLUMNS - 1u;
+                    }
+                } else if (terminalByte == 109u) {
+                    nextTerminalStyle = applyTerminalSgr(
+                        nextTerminalStyle, nextTerminalParam0);
+                    if (nextTerminalParamIndex != 0u) {
+                        nextTerminalStyle = applyTerminalSgr(
+                            nextTerminalStyle, nextTerminalParam1);
+                    }
+                }
+                nextTerminalEscapeState = 0u;
+                nextTerminalParam0 = 0u;
+                nextTerminalParam1 = 0u;
+                nextTerminalParamIndex = 0u;
+            }
+        }
+    }
+
     uint outputWord = currentWord;
     uint timerIncrement = (!linuxGuestPresent()
         || cycle % LINUX_TIMER_DIVIDER == LINUX_TIMER_DIVIDER - 1u) ? 1u : 0u;
@@ -1328,6 +1502,33 @@ void main() {
                 && outputIndex == UART_PENDING_INDEX) {
             outputWord = 1u;
         }
+    }
+    if (terminalUpdate) {
+        if (outputIndex >= TERMINAL_CELL_BASE
+                && outputIndex < TERMINAL_CELL_BASE + TERMINAL_CELL_COUNT) {
+            uint cellIndex = outputIndex - TERMINAL_CELL_BASE;
+            if (terminalScroll) {
+                uint row = cellIndex / TERMINAL_COLUMNS;
+                outputWord = row + 1u < TERMINAL_ROWS
+                    ? readStateWord(outputIndex + TERMINAL_COLUMNS) : 0u;
+            }
+            if (terminalErase && cellIndex >= terminalEraseFirst
+                    && cellIndex <= terminalEraseLast) {
+                outputWord = 0u;
+            }
+            if (terminalWriteCell && cellIndex == terminalWriteIndex) {
+                outputWord = terminalWriteValue;
+            }
+        }
+        if (outputIndex == TERMINAL_CURSOR_X_INDEX) outputWord = nextTerminalCursorX;
+        if (outputIndex == TERMINAL_CURSOR_Y_INDEX) outputWord = nextTerminalCursorY;
+        if (outputIndex == TERMINAL_ESCAPE_STATE_INDEX) {
+            outputWord = nextTerminalEscapeState;
+        }
+        if (outputIndex == TERMINAL_CSI_PARAM0_INDEX) outputWord = nextTerminalParam0;
+        if (outputIndex == TERMINAL_CSI_PARAM1_INDEX) outputWord = nextTerminalParam1;
+        if (outputIndex == TERMINAL_CSI_PARAM_INDEX) outputWord = nextTerminalParamIndex;
+        if (outputIndex == TERMINAL_STYLE_INDEX) outputWord = nextTerminalStyle;
     }
 
     if (cacheWrite && !cacheOverflow && outputIndex == CACHE_TAG_BASE + cacheSlot) {

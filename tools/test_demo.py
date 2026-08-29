@@ -1127,6 +1127,8 @@ def main() -> None:
     assert "const uint UART_LINE_LENGTH_BASE = 4871u;" in step_shader
     assert "const uint UART_RX_READY_INDEX = 4906u;" in step_shader
     assert "const uint RAM_PAGE_INDEX = 4907u;" in step_shader
+    assert "const uint TERMINAL_CELL_BASE = 4908u;" in step_shader
+    assert "const uint TERMINAL_ROWS = 14u;" in step_shader
     assert "value = uartReceiveInterruptPending() ? 0x04u" in step_shader
     load_block = step_shader[step_shader.index("} else if (opcode == 0x03u)") :]
     load_block = load_block[: load_block.index("} else if (opcode == 0x23u)")]
@@ -1136,6 +1138,10 @@ def main() -> None:
     assert "inputMarker != readStateWord(INPUT_MARKER_INDEX)" in step_shader
     assert "(inputEvent == 5u || inputEvent == 7u)" in step_shader
     assert "(readStateWord(RAM_PAGE_INDEX) + 1u) % 24u" in step_shader
+    assert "terminalByte == 74u" in step_shader
+    assert "terminalByte == 75u" in step_shader
+    assert "terminalByte == 109u" in step_shader
+    assert "applyTerminalSgr" in step_shader
     assert "if (dtbAddressValid(address, width)) return true;" in step_shader
     assert "const uint LINUX_TIMER_DIVIDER = 40u;" in step_shader
     assert "outputWord = readStateWord(csrStateIndex(CSR_MIP)) & ~0x000000a0u;" in step_shader
@@ -1144,6 +1150,8 @@ def main() -> None:
     assert "const uint UART_TERMINAL_BYTES = 448u;" in display_shader
     assert "const uint KEYBOARD_SELECTION_INDEX = 4904u;" in display_shader
     assert "const uint RAM_PAGE_INDEX = 4907u;" in display_shader
+    assert "const uint TERMINAL_CELL_BASE = 4908u;" in display_shader
+    assert "terminalPalette(packedCell, valueColour)" in display_shader
     assert "const uint RAM_PAGE_COUNT = 24u;" in display_shader
     assert "const uint RAM_PAGE_WORDS = 131072u;" in display_shader
     assert "const uint RAM_SAMPLE_WORD_STRIDE = 1024u;" in display_shader

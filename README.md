@@ -72,7 +72,7 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 ## Fibonacci 用户程序
 
-[`guest/fibonacci.S`](guest/fibonacci.S) 实现一个静态 RV32IMA Linux ELF。程序通过 `write(2)` 输出 48 个 32 位无符号斐波那契数，从 `F00 = 0000000000` 到 `F47 = 2971215073`，然后通过 `exit(2)` 返回状态 0。每条 UART 记录占用 32 字节，可在终端区域中按行显示。
+[`guest/fibonacci.S`](guest/fibonacci.S) 实现一个静态 RV32IMA Linux ELF。程序通过 `write(2)` 输出 48 个 32 位无符号斐波那契数，从 `F00 = 0000000000` 到 `F47 = 2971215073`，然后通过 `exit(2)` 返回状态 0。UART 输出由 32 × 14 字符终端增量解析并显示。
 
 [`guest/rvcinit`](guest/rvcinit) 在 overlay chroot 初始化完成后同步运行 `/fibonacci`。程序返回后，PID 1 启动交互式 `/bin/sh`，shell 退出后由循环重新启动。
 
@@ -122,7 +122,7 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 - Linux 视图右侧上方 32 × 14 区域：UART 终端中最新的 448 个字符单元。
 - Linux 视图右侧下方 10 × 5 区域：屏幕键盘与当前选择。
 - Linux 视图底部 64 × 2 色带：当前 512 KiB RAM 页面的 128 个物理页采样点。
-- Linux UART 换行会推进到下一行，行宽为 32 个字符。
+- Linux UART 终端解析回车、换行、退格、Tab，以及 ANSI CSI 清屏、清行、光标定位、光标移动和 16 色 SGR 样式。
 - 自检视图底部色带：起始 128 个 RAM word。
 
 OpenSBI 阶段的 PC 主要位于 `0x800...`。进入 Linux payload 时 PC 会短暂位于 `0x804...`，页表启用后主要位于 `0xC...`。异常诊断可直接读取 `MC/ME/MT`；Linux 通过 SBI 服务进入 M-mode 时，`MC=9` 表示一次正常的 supervisor environment call。
@@ -187,7 +187,7 @@ A = bits 31..24
 
 | 资源 | 尺寸 | 内容 |
 | --- | ---: | --- |
-| `state_a/state_b` | 128 × 128 | CSR、x0–x31、PC、周期、设备、写缓存 |
+| `state_a/state_b` | 128 × 128 | CSR、x0–x31、PC、周期、设备、终端字符单元、写缓存 |
 | `ram_a/ram_b` | 4096 × 768 | 12 MiB RAM target |
 | guest image | 2048 × 1024 | 8 MiB payload 与 16-byte boot descriptor |
 | DTB image | 1024 × 1 | 4 KiB DTB window |

@@ -33,6 +33,10 @@ const uint UART_LINE_LENGTH_BASE = 4871u;
 const uint UART_LINE_COUNT = 32u;
 const uint KEYBOARD_SELECTION_INDEX = 4904u;
 const uint RAM_PAGE_INDEX = 4907u;
+const uint TERMINAL_CELL_BASE = 4908u;
+const uint TERMINAL_COLUMNS = 32u;
+const uint TERMINAL_ROWS = 14u;
+const uint TERMINAL_CELL_COUNT = TERMINAL_COLUMNS * TERMINAL_ROWS;
 const uint UART_TX_BUFFER_OFFSET = RAM_WORDS * 4u;
 const uint UART_TX_BUFFER_BYTES = 1024u;
 const uint UART_TERMINAL_BYTES = 448u;
@@ -195,6 +199,25 @@ vec3 framebufferColour(uint value) {
     return 0.52 + 0.48 * cos(vec3(phase, phase + 2.1, phase + 4.2));
 }
 
+vec3 terminalPalette(uint packedCell, vec3 defaultColour) {
+    uint style = (packedCell >> 8u) & 0x11fu;
+    uint encodedColour = style & 0x1fu;
+    if (encodedColour == 0u) return defaultColour;
+    uint paletteIndex = encodedColour - 1u;
+    if ((style & 0x100u) != 0u && paletteIndex < 8u) paletteIndex += 8u;
+    const vec3 colours[16] = vec3[16](
+        vec3(0.10, 0.13, 0.16), vec3(0.72, 0.20, 0.22),
+        vec3(0.24, 0.70, 0.30), vec3(0.78, 0.68, 0.20),
+        vec3(0.28, 0.46, 0.78), vec3(0.70, 0.28, 0.72),
+        vec3(0.24, 0.70, 0.72), vec3(0.72, 0.78, 0.82),
+        vec3(0.34, 0.40, 0.46), vec3(1.00, 0.34, 0.36),
+        vec3(0.38, 1.00, 0.46), vec3(1.00, 0.90, 0.34),
+        vec3(0.42, 0.66, 1.00), vec3(1.00, 0.42, 1.00),
+        vec3(0.40, 1.00, 1.00), vec3(0.96, 0.98, 1.00)
+    );
+    return colours[min(paletteIndex, 15u)];
+}
+
 void main() {
     vec3 scene = texture(SceneSampler, texCoord).rgb;
     float scale = max(floor(min(OutSize.x / 320.0, OutSize.y / 180.0)), 1.0);
@@ -260,6 +283,7 @@ void main() {
     uint uartCount = min(uartDisplayEnd, uartDisplayBytes);
     uint uartStart = uartDisplayEnd - uartCount;
     float uartInk = 0.0;
+    vec3 uartColour = valueColour;
     vec2 uartTextOrigin = linuxView ? vec2(143.0, 18.0) : vec2(143.0, 136.0);
     float uartRowStride = linuxView ? 7.0 : 8.0;
     vec2 uartTextPixel = p - uartTextOrigin;
@@ -271,15 +295,26 @@ void main() {
         int column = int(floor(uartTextPixel.x / 5.0));
         int row = int(floor(uartTextPixel.y / uartRowStride));
         uint index = uint(row * 32 + column);
-        uint absoluteIndex = uartStart + index;
-        uint lineSlot = (absoluteIndex >> 5u) % UART_LINE_COUNT;
-        uint lineLength = readStateWord(UART_LINE_LENGTH_BASE + lineSlot);
-        bool populated = linuxView
-            ? absoluteIndex < uartHead && uint(column) < lineLength
-            : index < uartCount;
+        uint packedCell = 0u;
+        bool populated = false;
+        if (linuxView) {
+            if (index < TERMINAL_CELL_COUNT) {
+                packedCell = readStateWord(TERMINAL_CELL_BASE + index);
+                populated = (packedCell & 0xffu) != 0u;
+                uartColour = terminalPalette(packedCell, valueColour);
+            }
+        } else {
+            populated = index < uartCount;
+        }
         if (populated) {
-            uint bufferOffset = absoluteIndex % UART_TX_BUFFER_BYTES;
-            int code = int(readByte(UART_TX_BUFFER_OFFSET + bufferOffset));
+            int code = 0;
+            if (linuxView) {
+                code = int(packedCell & 0xffu);
+            } else {
+                uint absoluteIndex = uartStart + index;
+                uint bufferOffset = absoluteIndex % UART_TX_BUFFER_BYTES;
+                code = int(readByte(UART_TX_BUFFER_OFFSET + bufferOffset));
+            }
             uartInk = glyphPixel(
                 p,
                 uartTextOrigin + vec2(float(column) * 5.0,
@@ -289,7 +324,7 @@ void main() {
             );
         }
     }
-    colour = mix(colour, valueColour, uartInk);
+    colour = mix(colour, uartColour, uartInk);
 
     if (linuxView) {
         vec2 keyboardOrigin = vec2(143.0, 120.0);
