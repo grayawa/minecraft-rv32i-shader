@@ -1128,6 +1128,11 @@ def main() -> None:
     assert "const uint UART_RX_READY_INDEX = 4906u;" in step_shader
     assert "const uint RAM_PAGE_INDEX = 4907u;" in step_shader
     assert "value = uartReceiveInterruptPending() ? 0x04u" in step_shader
+    load_block = step_shader[step_shader.index("} else if (opcode == 0x03u)") :]
+    load_block = load_block[: load_block.index("} else if (opcode == 0x23u)")]
+    assert "memoryAddress = physicalAddress;" in load_block
+    assert "memoryWidth = width;" in load_block
+    assert "memoryAddress == UART_BASE_ADDRESS" in step_shader
     assert "inputMarker != readStateWord(INPUT_MARKER_INDEX)" in step_shader
     assert "(inputEvent == 5u || inputEvent == 7u)" in step_shader
     assert "(readStateWord(RAM_PAGE_INDEX) + 1u) % 24u" in step_shader

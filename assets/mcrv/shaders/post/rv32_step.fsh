@@ -830,6 +830,8 @@ void main() {
                 trapCause = 5u;
                 trapValue = address;
             } else {
+                memoryAddress = physicalAddress;
+                memoryWidth = width;
                 uint word = readPhysicalWord(physicalAddress);
                 uint shift = (physicalAddress & 3u) * 8u;
                 uint loaded = width == 1u ? ((word >> shift) & 0xffu)
