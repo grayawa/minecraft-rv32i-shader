@@ -1204,9 +1204,29 @@ def main() -> None:
     datapack_poll = (
         datapack_root / "data" / "mcrv" / "function" / "input" / "poll.mcfunction"
     ).read_text("utf-8")
+    datapack_init = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "init.mcfunction"
+    ).read_text("utf-8")
+    datapack_emit = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "emit.mcfunction"
+    ).read_text("utf-8")
+    datapack_tick = (
+        datapack_root / "data" / "mcrv" / "function" / "input" / "tick.mcfunction"
+    ).read_text("utf-8")
     assert "scoreboard objectives add mcrv_hold dummy" in datapack_load
+    assert "scoreboard objectives add mcrv_owner dummy" in datapack_load
+    assert "kill @e[type=minecraft:text_display,tag=mcrv_input_marker]" in datapack_load
+    assert "title @a clear" in datapack_load
     assert "if score @s mcrv_hold matches 10.. run function mcrv:input/emit" in datapack_poll
     assert "run scoreboard players set @s mcrv_hold 7" in datapack_poll
+    assert "execute positioned ^ ^ ^0.4 as @e" in datapack_poll
+    assert "run tp @s ~ ~ ~" in datapack_poll
+    assert "summon minecraft:text_display ^ ^ ^0.4" in datapack_init
+    assert 'billboard:"center"' in datapack_init
+    assert "scale:[0.05f,0.05f,0.05f]" in datapack_init
+    assert "run data merge entity @s {text:" in datapack_emit
+    assert " run title " not in datapack_emit
+    assert "at @s anchored eyes run function mcrv:input/poll" in datapack_tick
     for direction, field in {
         "up": "forward",
         "down": "backward",
@@ -1538,8 +1558,8 @@ def main() -> None:
         "interrupts, Sv32, MPRV, SUM/MXR, 12 delegated traps, 2815 instructions; "
         "0x80000000 boot descriptor, platform DTB and a0/a1 probe; Linux payload, "
         "12 MiB RAM DTB, Fibonacci ROMFS user program, 1 KiB UART ring, "
-        "50-key input bridge, 24-page RAM sampler, rvc timer semantics and Linux "
-        "profiles up to 512 instructions/frame"
+        "50-key world-space input bridge, 24-page RAM sampler, rvc timer semantics "
+        "and Linux profiles up to 512 instructions/frame"
     )
 
 

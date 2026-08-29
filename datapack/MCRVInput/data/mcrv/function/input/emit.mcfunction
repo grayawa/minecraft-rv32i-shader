@@ -1,16 +1,17 @@
 scoreboard players add @s mcrv_phase 1
 execute if score @s mcrv_phase matches 2.. run scoreboard players set @s mcrv_phase 0
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 1 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 2 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 3 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 4 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 5 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 6 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 7 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 1 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 2 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 3 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 4 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 5 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 6 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
-execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 7 run title @s title {"text":"","font":"mcrv:input","color":"white","shadow_color":0}
+scoreboard players operation #current mcrv_owner = @s mcrv_owner
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 1 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 2 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 3 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 4 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 5 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 6 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 0 if score @s mcrv_input matches 7 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 1 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 2 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 3 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 4 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 5 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 6 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}
+execute if score @s mcrv_phase matches 1 if score @s mcrv_input matches 7 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run data merge entity @s {text:{text:"",font:"mcrv:input",color:"white",shadow_color:0}}

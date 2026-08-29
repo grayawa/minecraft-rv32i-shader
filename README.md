@@ -19,13 +19,20 @@
    /posteffect add @s mcrv:rv32i_linux
    ```
 
-重新启动模拟器时执行：
+7. 启用世界空间输入桥：
+
+   ```mcfunction
+   /function mcrv:input/enable
+   ```
+
+重新启动模拟器时依次执行：
 
 ```mcfunction
+/function mcrv:input/disable
 /posteffect clear
 ```
 
-按 `F3+T` 重新加载资源，然后再次添加效果。窗口尺寸变化也会重新初始化 persistent target。
+按 `F3+T` 重新加载资源，再次添加效果并运行 `/function mcrv:input/enable`。窗口尺寸变化也会重新初始化 persistent target。
 
 六个运行配置共用同一套 CPU 核心：
 
@@ -71,7 +78,7 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 ## 屏幕键盘
 
-`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。数据包使用标题层中的自定义字体色码传递事件；`rv32_input_capture` pass 每帧解码一次色码，并将确认字符送入 UART RX。
+`MCRVInput` 数据包读取玩家的移动、跳跃、潜行和疾跑输入。启用输入桥时，数据包在玩家视线前方维护一个全亮度 `text_display`，并使用自定义字体色码传递事件。`rv32_input_capture` pass 每帧从世界场景中解码一次色码，并将确认字符送入 UART RX。最终仪表盘覆盖该标记所在的屏幕区域。
 
 | 玩家输入 | 键盘操作 |
 | --- | --- |
@@ -84,9 +91,9 @@ rvc 参考执行器使用同一份 patched payload、DTB 与 ROMFS，可进入 L
 
 底部 RAM 色带提供 24 张页面，每张覆盖 512 KiB guest RAM。色带中的 128 个单元依次采样该窗口内的 4 KiB 物理页；左下角 `RP` 显示十六进制页面编号 `00`–`17`。Shift 首次触发后等待 10 个游戏刻，再以每 3 个游戏刻一页的速度连续翻页。
 
-输入事件使用交替序列位区分连续按键。UART 提供 RBR、LSR Data Ready、IIR receive-data-available 原因和 PLIC source 10 接收中断。标题色码位于仪表盘覆盖区域，资源包负责生成对应的 16 色字体纹理。输入时保持游戏 HUD 可见，并让游戏窗口拥有键盘焦点。
+输入事件使用交替序列位区分连续按键。UART 提供 RBR、LSR Data Ready、IIR receive-data-available 原因和 PLIC source 10 接收中断。世界空间色码位于仪表盘覆盖区域，资源包负责生成对应的 16 色字体纹理。输入时让游戏窗口拥有键盘焦点。
 
-数据包默认向进入世界的玩家启用输入桥。临时关闭与重新启用可分别执行：
+数据包加载后清理输入实体并等待玩家启用输入桥。关闭与启用可分别执行：
 
 ```mcfunction
 /function mcrv:input/disable

@@ -1,3 +1,5 @@
+scoreboard players operation #current mcrv_owner = @s mcrv_owner
+execute positioned ^ ^ ^0.4 as @e[type=minecraft:text_display,tag=mcrv_input_marker] if score @s mcrv_owner = #current mcrv_owner run tp @s ~ ~ ~
 scoreboard players set @s mcrv_input 0
 execute if predicate mcrv:input/up run scoreboard players set @s mcrv_input 1
 execute if predicate mcrv:input/down run scoreboard players set @s mcrv_input 2
